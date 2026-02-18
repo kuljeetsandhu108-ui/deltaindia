@@ -8,7 +8,8 @@ from . import models, database, security, crud
 class RealTimeEngine:
     def __init__(self):
         self.is_running = False
-        self.delta_ws_url = "wss://socket.delta.exchange"
+        # 🇮🇳 INDIA SPECIFIC WEBSOCKET URL
+        self.delta_ws_url = "wss://socket.india.delta.exchange"
 
     async def get_active_symbols(self, db: Session):
         strategies = db.query(models.Strategy).filter(models.Strategy.is_running == True).all()
@@ -22,14 +23,11 @@ class RealTimeEngine:
         ).all()
 
         for strat in strategies:
-            # LOG: Price Check
-            # (Optional: Comment this out if it fills DB too fast)
-            crud.create_log(db, strat.id, f"Checking Price: {symbol} @ {current_price}", "INFO")
+            # OPTIONAL: Log every tick (Can be noisy, uncomment if needed)
+            # crud.create_log(db, strat.id, f"Checking: {symbol} @ {current_price}", "INFO")
             
             user = strat.owner
-            if not user.delta_api_key:
-                crud.create_log(db, strat.id, "Missing API Keys - Cannot Trade", "ERROR")
-                continue
+            if not user.delta_api_key: continue
 
             logic = strat.logic_configuration
             qty = logic.get('quantity', 1)
@@ -45,22 +43,33 @@ class RealTimeEngine:
                 api_key = security.decrypt_value(user.delta_api_key)
                 secret = security.decrypt_value(user.delta_api_secret)
                 
+                # 🇮🇳 INDIA SPECIFIC CONFIGURATION
                 exchange = ccxt.delta({
                     'apiKey': api_key,
                     'secret': secret,
-                    'options': { 'defaultType': 'future', 'adjustForTimeDifference': True }
+                    'options': { 'defaultType': 'future', 'adjustForTimeDifference': True },
+                    'urls': {
+                        'api': {
+                            'public': 'https://api.india.delta.exchange',
+                            'private': 'https://api.india.delta.exchange',
+                        },
+                        'www': 'https://india.delta.exchange',
+                    }
                 })
                 
                 crud.create_log(db, strat.id, f"🚀 Firing Order: Buy {qty} {symbol}", "INFO")
                 
+                # Execute Market Order
                 await exchange.create_order(symbol, 'market', 'buy', qty, params=params)
                 
-                crud.create_log(db, strat.id, f"✅ Order Filled Successfully!", "SUCCESS")
+                crud.create_log(db, strat.id, f"✅ India Order Filled!", "SUCCESS")
 
             except Exception as e:
                 msg = str(e)
                 if "invalid_api_key" in msg:
-                    crud.create_log(db, strat.id, "❌ Auth Failed: Invalid API Key", "ERROR")
+                    crud.create_log(db, strat.id, "❌ Auth Failed: Check India Keys", "ERROR")
+                elif "insufficient_balance" in msg:
+                    crud.create_log(db, strat.id, "❌ Failed: No Money in Wallet", "ERROR")
                 else:
                     crud.create_log(db, strat.id, f"❌ Trade Failed: {msg[:50]}...", "ERROR")
             finally:
@@ -68,12 +77,13 @@ class RealTimeEngine:
 
     async def start(self):
         self.is_running = True
-        print("✅ ENGINE STARTED")
+        print("✅ INDIA TRADING ENGINE STARTED")
 
         while self.is_running:
             try:
+                # 🇮🇳 Connecting to India Socket
                 async with websockets.connect(self.delta_ws_url) as websocket:
-                    print("🔗 Connected to Delta")
+                    print("🔗 Connected to Delta India WebSocket")
                     db = database.SessionLocal()
                     symbols = await self.get_active_symbols(db)
                     db.close()
