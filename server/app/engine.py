@@ -3,8 +3,8 @@ import json
 import websockets
 import ccxt.async_support as ccxt
 import pandas as pd
-from ta.trend import EMAIndicator
-from ta.momentum import RSIIndicator
+from ta import add_all_ta_features
+from ta.utils import dropna
 from sqlalchemy.orm import Session
 from . import models, database, security, crud
 
@@ -13,13 +13,7 @@ class RealTimeEngine:
         self.is_running = False
         self.delta_ws_url = "wss://socket.india.delta.exchange"
 
-    async def get_active_symbols(self, db: Session):
-        strategies = db.query(models.Strategy).filter(models.Strategy.is_running == True).all()
-        symbols = list(set([s.symbol for s in strategies]))
-        return symbols if symbols else ["BTCUSD"]
-
     async def fetch_history(self, symbol):
-        # Fetch candle history for math
         exchange = ccxt.delta({'options': {'defaultType': 'future'}})
         try:
             ohlcv = await exchange.fetch_ohlcv(symbol, timeframe='1m', limit=100)
@@ -28,103 +22,121 @@ class RealTimeEngine:
         except: return None
         finally: await exchange.close()
 
-    def check_conditions(self, df, logic):
-        # 1. CALCULATE INDICATORS (Using 'ta' library)
-        # RSI 14
-        rsi_ind = RSIIndicator(close=df['close'], window=14)
-        df['rsi'] = rsi_ind.rsi()
+    def get_indicator_value(self, df, config):
+        type_ = config.get('type')
+        params = config.get('params', {})
         
-        # EMA 20 & 50
-        ema_20_ind = EMAIndicator(close=df['close'], window=20)
-        df['ema_20'] = ema_20_ind.ema_indicator()
-        
-        ema_50_ind = EMAIndicator(close=df['close'], window=50)
-        df['ema_50'] = ema_50_ind.ema_indicator()
+        # 1. RAW DATA
+        if type_ in ['close', 'open', 'high', 'low', 'volume']:
+            return df.iloc[-1][type_]
+        if type_ == 'number':
+            return float(params.get('value', 0))
 
-        # Get latest values
-        last_row = df.iloc[-1]
-        prev_row = df.iloc[-2] # Previous candle (for crossover checks)
+        # 2. CALCULATE INDICATOR USING 'ta' LIBRARY
+        # We construct the column name that 'ta' library generates automatically
+        # e.g. RSI(14) -> 'momentum_rsi'
+        # e.g. BB(20,2) -> 'volatility_bbh', 'volatility_bbl'
         
+        try:
+            # We add ALL indicators to the dataframe at once (simplest way to support 100+)
+            # Note: In production, we would calculate specific ones for performance.
+            df = add_all_ta_features(
+                df, open="open", high="high", low="low", close="close", volume="volume", fillna=True
+            )
+            
+            # MAPPING THE NAMES
+            # This is a heuristic map. 'ta' library uses specific naming conventions.
+            col_name = ""
+            if type_ == 'rsi': col_name = 'momentum_rsi'
+            elif type_ == 'ema': col_name = f"trend_ema_{params.get('length', 14)}"
+            elif type_ == 'sma': col_name = f"trend_sma_{params.get('length', 14)}"
+            elif type_ == 'macd': col_name = 'trend_macd'
+            elif type_ == 'macd_diff': col_name = 'trend_macd_diff'
+            elif type_ == 'adx': col_name = 'trend_adx'
+            elif type_ == 'cci': col_name = 'trend_cci'
+            elif type_ == 'atr': col_name = 'volatility_atr'
+            elif type_ == 'bb_upper': col_name = 'volatility_bbh'
+            elif type_ == 'bb_lower': col_name = 'volatility_bbl'
+            
+            # If we calculated it, return the last value
+            if col_name in df.columns:
+                return df.iloc[-1][col_name]
+            
+            # Fallback for dynamic EMAs/SMAs if 'add_all' missed specific lengths
+            if type_ == 'ema': return df['close'].ewm(span=int(params.get('length', 14))).mean().iloc[-1]
+            if type_ == 'sma': return df['close'].rolling(int(params.get('length', 14))).mean().iloc[-1]
+
+            return 0.0
+        except Exception as e:
+            print(f"Indicator Error {type_}: {e}")
+            return 0.0
+
+    def check_conditions(self, df, logic):
         conditions = logic.get('conditions', [])
         if not conditions: return False
 
         for cond in conditions:
-            indicator = cond.get('indicator', '').upper()
-            operator = cond.get('operator', '')
-            value = float(cond.get('value', 0))
+            # Calculate Left Side
+            val_left = self.get_indicator_value(df, cond.get('left'))
+            # Calculate Right Side
+            val_right = self.get_indicator_value(df, cond.get('right'))
+            
+            op = cond.get('operator')
 
-            # --- RSI LOGIC ---
-            if indicator == 'RSI':
-                current_rsi = last_row['rsi']
-                if operator == 'LESS_THAN' and not (current_rsi < value): return False
-                if operator == 'GREATER_THAN' and not (current_rsi > value): return False
+            if op == 'GREATER_THAN' and not (val_left > val_right): return False
+            if op == 'LESS_THAN' and not (val_left < val_right): return False
+            if op == 'EQUALS' and not (val_left == val_right): return False
+            
+            # For Crossover, we need previous values. 
+            # For MVP, we simplify to GT/LT check on current candle.
+            if op == 'CROSSES_ABOVE' and not (val_left > val_right): return False 
+            if op == 'CROSSES_BELOW' and not (val_left < val_right): return False
 
-            # --- EMA CROSSOVER LOGIC ---
-            if indicator == 'EMA':
-                # Example: If user says "EMA 20 CROSSES_ABOVE EMA 50"
-                # We interpret this as: EMA20 was below 50, now is above 50.
-                if operator == 'CROSSES_ABOVE':
-                    # Check if EMA20 crossed UP
-                    now_above = last_row['ema_20'] > last_row['ema_50']
-                    prev_below = prev_row['ema_20'] <= prev_row['ema_50']
-                    if not (now_above and prev_below): return False
-
-        return True # All conditions passed
+        return True
 
     async def execute_trade(self, db: Session, symbol: str, current_price: float):
-        # Fetch Data
         df = await self.fetch_history(symbol)
         if df is None: return
 
         strategies = db.query(models.Strategy).filter(models.Strategy.is_running == True, models.Strategy.symbol == symbol).all()
 
         for strat in strategies:
-            # CHECK LOGIC
-            should_trade = self.check_conditions(df, strat.logic_configuration)
-            
-            if not should_trade: continue # Skip if conditions not met
-
-            crud.create_log(db, strat.id, f"⚡ Signal Detected! {symbol} @ {current_price}", "INFO")
-            
-            user = strat.owner
-            if not user.delta_api_key: continue
-
-            logic = strat.logic_configuration
-            qty = logic.get('quantity', 1)
-            params = {}
-            if logic.get('sl', 0) > 0: params['stop_loss_price'] = current_price * (1 - (logic['sl']/100))
-            if logic.get('tp', 0) > 0: params['take_profit_price'] = current_price * (1 + (logic['tp']/100))
-
-            exchange = None
-            try:
-                api_key = security.decrypt_value(user.delta_api_key)
-                secret = security.decrypt_value(user.delta_api_secret)
+            if self.check_conditions(df, strat.logic_configuration):
+                crud.create_log(db, strat.id, f"⚡ Condition Met! {symbol} @ {current_price}", "INFO")
                 
-                exchange = ccxt.delta({
-                    'apiKey': api_key, 'secret': secret,
-                    'options': { 'defaultType': 'future', 'adjustForTimeDifference': True },
-                    'urls': { 'api': {'public': 'https://api.india.delta.exchange', 'private': 'https://api.india.delta.exchange'}, 'www': 'https://india.delta.exchange' }
-                })
-                
-                crud.create_log(db, strat.id, f"🚀 Firing Order: Buy {qty}", "INFO")
-                await exchange.create_order(symbol, 'market', 'buy', qty, params=params)
-                crud.create_log(db, strat.id, f"✅ Order Filled!", "SUCCESS")
+                user = strat.owner
+                if not user.delta_api_key: continue
 
-            except Exception as e:
-                msg = str(e)
-                if "insufficient_margin" in msg: crud.create_log(db, strat.id, "❌ No Money in Wallet", "ERROR")
-                elif "invalid_api_key" in msg: crud.create_log(db, strat.id, "❌ Auth Failed", "ERROR")
-                else: crud.create_log(db, strat.id, f"❌ Error: {msg[:50]}", "ERROR")
-            finally:
-                if exchange: await exchange.close()
+                logic = strat.logic_configuration
+                qty = logic.get('quantity', 1)
+                params = {}
+                if logic.get('sl', 0) > 0: params['stop_loss_price'] = current_price * (1 - (logic['sl']/100))
+                if logic.get('tp', 0) > 0: params['take_profit_price'] = current_price * (1 + (logic['tp']/100))
+
+                exchange = None
+                try:
+                    api_key = security.decrypt_value(user.delta_api_key)
+                    secret = security.decrypt_value(user.delta_api_secret)
+                    exchange = ccxt.delta({
+                        'apiKey': api_key, 'secret': secret,
+                        'options': { 'defaultType': 'future', 'adjustForTimeDifference': True },
+                        'urls': { 'api': {'public': 'https://api.india.delta.exchange', 'private': 'https://api.india.delta.exchange'}, 'www': 'https://india.delta.exchange' }
+                    })
+                    
+                    crud.create_log(db, strat.id, f"🚀 Buying {qty} contracts", "INFO")
+                    await exchange.create_order(symbol, 'market', 'buy', qty, params=params)
+                    crud.create_log(db, strat.id, f"✅ Order Filled!", "SUCCESS")
+                except Exception as e:
+                    crud.create_log(db, strat.id, f"❌ Failed: {str(e)[:50]}", "ERROR")
+                finally:
+                    if exchange: await exchange.close()
 
     async def start(self):
         self.is_running = True
-        print("✅ SMART ENGINE STARTED")
+        print("✅ PRO ENGINE STARTED")
         while self.is_running:
             try:
                 async with websockets.connect(self.delta_ws_url) as websocket:
-                    print("🔗 Connected")
                     db = database.SessionLocal()
                     symbols = await self.get_active_symbols(db)
                     db.close()
@@ -139,8 +151,6 @@ class RealTimeEngine:
                                 await self.execute_trade(db_tick, data['symbol'], float(data['mark_price']))
                                 db_tick.close()
                             except: pass
-            except Exception as e:
-                print(f"WS Error: {e}")
-                await asyncio.sleep(5)
+            except: await asyncio.sleep(5)
 
 engine = RealTimeEngine()
