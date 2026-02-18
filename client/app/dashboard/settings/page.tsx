@@ -14,10 +14,10 @@ export default function BrokerSettings() {
   const handleSave = async (broker: string) => {
     if (!session?.user?.email) return alert("Please log in first.");
     try {
-      // FIXED: Uses the Environment Variable instead of 127.0.0.1
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
       
-      const res = await fetch(\\/user/keys\, {
+      // FIXED LINE BELOW: No backslashes
+      const res = await fetch(`${apiUrl}/user/keys`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

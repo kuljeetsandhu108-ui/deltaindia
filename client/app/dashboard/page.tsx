@@ -15,9 +15,11 @@ export default function Dashboard() {
 
   const fetchStrategies = async () => {
     try {
-      // FIXED: Uses Environment Variable
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-      const res = await fetch(\\/strategies/\ + session?.user?.email);
+      
+      // FIXED LINE BELOW: No backslashes
+      const res = await fetch(`${apiUrl}/strategies/` + session?.user?.email);
+      
       const data = await res.json();
       setStrategies(data);
     } catch (e) { console.error("Failed to fetch strategies"); }

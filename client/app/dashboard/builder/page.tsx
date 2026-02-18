@@ -18,11 +18,17 @@ export default function StrategyBuilder() {
     if (!session?.user?.email) return alert("Please login first");
     const payload = { email: session.user.email, name: strategyName, symbol: symbol, logic: { conditions: conditions } };
     try {
-      // FIXED: Uses Environment Variable
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-      const res = await fetch(\\/strategy/create\, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      
+      // FIXED LINE BELOW: No backslashes
+      const res = await fetch(`${apiUrl}/strategy/create`, { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify(payload) 
+      });
+      
       const data = await res.json();
-      if(res.ok) { alert("🚀 STRATEGY DEPLOYED! ID: " + data.id + "\\nEngine is now watching " + symbol); } 
+      if(res.ok) { alert("🚀 STRATEGY DEPLOYED! ID: " + data.id + "\nEngine is now watching " + symbol); } 
       else { alert("Deployment Failed"); }
     } catch (e) { alert("Server Error."); }
   };
