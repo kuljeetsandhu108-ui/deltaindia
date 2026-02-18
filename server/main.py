@@ -3,28 +3,23 @@ from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-
+from typing import List
 from app import models, database, schemas, crud
-from app.engine import engine as trading_engine # Import the engine
+from app.engine import engine as trading_engine
 
-# --- LIFECYCLE MANAGER ---
-# This starts the engine when the server starts
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: Run the engine in the background
     asyncio.create_task(trading_engine.start())
     yield
-    # Shutdown logic (if any)
     trading_engine.is_running = False
 
 models.Base.metadata.create_all(bind=database.engine)
-
-# Attach lifespan to app
 app = FastAPI(title="AlgoTradeIndia Engine", lifespan=lifespan)
 
+# FIXED: ALLOW ALL ORIGINS FOR LIVE SITE
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["*"], # Allow testeralgo.online
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -47,8 +42,7 @@ def save_keys(keys: schemas.BrokerKeys, db: Session = Depends(database.get_db)):
              new_user = schemas.UserCreate(email=keys.email, full_name="Trader", picture="")
              crud.create_user(db, new_user)
              crud.update_broker_keys(db, keys)
-        except:
-             raise HTTPException(status_code=404, detail="User syncing error.")
+        except: raise HTTPException(status_code=404, detail="User syncing error.")
     return {"status": "Keys Encrypted & Saved"}
 
 @app.post("/strategy/create")
