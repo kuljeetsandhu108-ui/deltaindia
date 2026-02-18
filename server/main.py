@@ -16,10 +16,9 @@ async def lifespan(app: FastAPI):
 models.Base.metadata.create_all(bind=database.engine)
 app = FastAPI(title="AlgoTradeIndia Engine", lifespan=lifespan)
 
-# FIXED: ALLOW ALL ORIGINS FOR LIVE SITE
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Allow testeralgo.online
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -56,3 +55,10 @@ def get_user_strategies(email: str, db: Session = Depends(database.get_db)):
     user = crud.get_user_by_email(db, email)
     if not user: return []
     return user.strategies
+
+# --- NEW DELETE ENDPOINT ---
+@app.delete("/strategies/{id}")
+def delete_strategy(id: int, db: Session = Depends(database.get_db)):
+    db.query(models.Strategy).filter(models.Strategy.id == id).delete()
+    db.commit()
+    return {"status": "Deleted"}
