@@ -3,7 +3,8 @@ import json
 import websockets
 import ccxt.async_support as ccxt
 import pandas as pd
-import pandas_ta as ta
+from ta.trend import EMAIndicator
+from ta.momentum import RSIIndicator
 from sqlalchemy.orm import Session
 from . import models, database, security, crud
 
@@ -11,11 +12,14 @@ class RealTimeEngine:
     def __init__(self):
         self.is_running = False
         self.delta_ws_url = "wss://socket.india.delta.exchange"
-        # Cache candles to avoid fetching history on every tick
-        self.market_data = {} 
+
+    async def get_active_symbols(self, db: Session):
+        strategies = db.query(models.Strategy).filter(models.Strategy.is_running == True).all()
+        symbols = list(set([s.symbol for s in strategies]))
+        return symbols if symbols else ["BTCUSD"]
 
     async def fetch_history(self, symbol):
-        # Fetch last 100 candles for calculation
+        # Fetch candle history for math
         exchange = ccxt.delta({'options': {'defaultType': 'future'}})
         try:
             ohlcv = await exchange.fetch_ohlcv(symbol, timeframe='1m', limit=100)
@@ -25,50 +29,61 @@ class RealTimeEngine:
         finally: await exchange.close()
 
     def check_conditions(self, df, logic):
-        # 1. Calculate Indicators
-        # Example: Calculate RSI 14
-        df['rsi'] = df.ta.rsi(length=14)
-        df['ema_20'] = df.ta.ema(length=20)
-        df['ema_50'] = df.ta.ema(length=50)
+        # 1. CALCULATE INDICATORS (Using 'ta' library)
+        # RSI 14
+        rsi_ind = RSIIndicator(close=df['close'], window=14)
+        df['rsi'] = rsi_ind.rsi()
+        
+        # EMA 20 & 50
+        ema_20_ind = EMAIndicator(close=df['close'], window=20)
+        df['ema_20'] = ema_20_ind.ema_indicator()
+        
+        ema_50_ind = EMAIndicator(close=df['close'], window=50)
+        df['ema_50'] = ema_50_ind.ema_indicator()
 
         # Get latest values
         last_row = df.iloc[-1]
+        prev_row = df.iloc[-2] # Previous candle (for crossover checks)
         
         conditions = logic.get('conditions', [])
         if not conditions: return False
 
-        # 2. Evaluate User Logic
-        # For MVP, we handle: RSI < Value, and EMA Cross
         for cond in conditions:
             indicator = cond.get('indicator', '').upper()
             operator = cond.get('operator', '')
             value = float(cond.get('value', 0))
 
+            # --- RSI LOGIC ---
             if indicator == 'RSI':
                 current_rsi = last_row['rsi']
                 if operator == 'LESS_THAN' and not (current_rsi < value): return False
                 if operator == 'GREATER_THAN' and not (current_rsi > value): return False
-            
-            # Add more indicators here later...
+
+            # --- EMA CROSSOVER LOGIC ---
+            if indicator == 'EMA':
+                # Example: If user says "EMA 20 CROSSES_ABOVE EMA 50"
+                # We interpret this as: EMA20 was below 50, now is above 50.
+                if operator == 'CROSSES_ABOVE':
+                    # Check if EMA20 crossed UP
+                    now_above = last_row['ema_20'] > last_row['ema_50']
+                    prev_below = prev_row['ema_20'] <= prev_row['ema_50']
+                    if not (now_above and prev_below): return False
 
         return True # All conditions passed
 
     async def execute_trade(self, db: Session, symbol: str, current_price: float):
-        # 1. Fetch History for Math
+        # Fetch Data
         df = await self.fetch_history(symbol)
         if df is None: return
 
         strategies = db.query(models.Strategy).filter(models.Strategy.is_running == True, models.Strategy.symbol == symbol).all()
 
         for strat in strategies:
-            # 2. CHECK LOGIC
+            # CHECK LOGIC
             should_trade = self.check_conditions(df, strat.logic_configuration)
             
-            if not should_trade:
-                # Log heartbeat occasionally? No, too noisy.
-                continue
+            if not should_trade: continue # Skip if conditions not met
 
-            # IF LOGIC PASSES -> EXECUTE
             crud.create_log(db, strat.id, f"⚡ Signal Detected! {symbol} @ {current_price}", "INFO")
             
             user = strat.owner
