@@ -56,9 +56,13 @@ def get_user_strategies(email: str, db: Session = Depends(database.get_db)):
     if not user: return []
     return user.strategies
 
-# --- NEW DELETE ENDPOINT ---
 @app.delete("/strategies/{id}")
 def delete_strategy(id: int, db: Session = Depends(database.get_db)):
     db.query(models.Strategy).filter(models.Strategy.id == id).delete()
     db.commit()
     return {"status": "Deleted"}
+
+# --- NEW LOGS ENDPOINT ---
+@app.get("/strategies/{id}/logs")
+def get_logs(id: int, db: Session = Depends(database.get_db)):
+    return crud.get_strategy_logs(db, id)

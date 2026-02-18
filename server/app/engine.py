@@ -3,7 +3,7 @@ import json
 import websockets
 import ccxt.async_support as ccxt
 from sqlalchemy.orm import Session
-from . import models, database, security
+from . import models, database, security, crud
 
 class RealTimeEngine:
     def __init__(self):
@@ -22,32 +22,23 @@ class RealTimeEngine:
         ).all()
 
         for strat in strategies:
-            print(f"⚡ [TICK] {symbol} @ {current_price} | Checking: {strat.name}")
+            # LOG: Price Check
+            # (Optional: Comment this out if it fills DB too fast)
+            crud.create_log(db, strat.id, f"Checking Price: {symbol} @ {current_price}", "INFO")
             
             user = strat.owner
-            if not user.delta_api_key: continue
+            if not user.delta_api_key:
+                crud.create_log(db, strat.id, "Missing API Keys - Cannot Trade", "ERROR")
+                continue
 
-            # --- EXTRACT USER SETTINGS ---
             logic = strat.logic_configuration
-            
-            # Default to 1 contract if not set
-            qty = logic.get('quantity', 1) 
-            
-            # Risk Management
+            qty = logic.get('quantity', 1)
             sl_pct = logic.get('sl', 0)
             tp_pct = logic.get('tp', 0)
             
             params = {}
-            # Calculate SL/TP Prices
-            if sl_pct > 0:
-                # If Buying, SL is below price
-                sl_price = current_price * (1 - (sl_pct / 100))
-                params['stop_loss_price'] = sl_price
-                
-            if tp_pct > 0:
-                # If Buying, TP is above price
-                tp_price = current_price * (1 + (tp_pct / 100))
-                params['take_profit_price'] = tp_price
+            if sl_pct > 0: params['stop_loss_price'] = current_price * (1 - (sl_pct / 100))
+            if tp_pct > 0: params['take_profit_price'] = current_price * (1 + (tp_pct / 100))
 
             exchange = None
             try:
@@ -60,28 +51,29 @@ class RealTimeEngine:
                     'options': { 'defaultType': 'future', 'adjustForTimeDifference': True }
                 })
                 
-                print(f"🚀 FIRING ORDER: {strat.name} | Qty: {qty} | SL: {sl_pct}% | TP: {tp_pct}%")
+                crud.create_log(db, strat.id, f"🚀 Firing Order: Buy {qty} {symbol}", "INFO")
                 
-                # Execute Market Order with Risk Params
                 await exchange.create_order(symbol, 'market', 'buy', qty, params=params)
-                print("✅ ORDER SENT TO EXCHANGE")
+                
+                crud.create_log(db, strat.id, f"✅ Order Filled Successfully!", "SUCCESS")
 
             except Exception as e:
-                if "invalid_api_key" in str(e):
-                    print(f"❌ Auth Error: Invalid API Key")
+                msg = str(e)
+                if "invalid_api_key" in msg:
+                    crud.create_log(db, strat.id, "❌ Auth Failed: Invalid API Key", "ERROR")
                 else:
-                    print(f"❌ Execution Failed: {e}")
+                    crud.create_log(db, strat.id, f"❌ Trade Failed: {msg[:50]}...", "ERROR")
             finally:
                 if exchange: await exchange.close()
 
     async def start(self):
         self.is_running = True
-        print("✅ REAL-TIME WEBSOCKET ENGINE STARTED")
+        print("✅ ENGINE STARTED")
 
         while self.is_running:
             try:
                 async with websockets.connect(self.delta_ws_url) as websocket:
-                    print("🔗 Connected to Delta WebSocket")
+                    print("🔗 Connected to Delta")
                     db = database.SessionLocal()
                     symbols = await self.get_active_symbols(db)
                     db.close()
@@ -101,7 +93,7 @@ class RealTimeEngine:
                                 db_tick.close()
                             except: pass
             except Exception as e:
-                print(f"⚠️ Connection Lost: {e}. Reconnecting...")
+                print(f"WS Error: {e}")
                 await asyncio.sleep(5)
 
 engine = RealTimeEngine()
