@@ -9,11 +9,9 @@ export default function StrategyBuilder() {
   const { data: session } = useSession();
   const [strategyName, setStrategyName] = useState("My Alpha Algo 1");
   const [symbol, setSymbol] = useState("BTCUSD");
-  // NEW STATE VARIABLES
   const [quantity, setQuantity] = useState(1);
-  const [stopLoss, setStopLoss] = useState(1.0); // 1% default
-  const [takeProfit, setTakeProfit] = useState(2.0); // 2% default
-  
+  const [stopLoss, setStopLoss] = useState(1.0);
+  const [takeProfit, setTakeProfit] = useState(2.0);
   const [conditions, setConditions] = useState([{ id: 1, indicator: 'EMA', period: '20', operator: 'CROSSES_ABOVE', value: 'EMA 50' }]);
 
   const addCondition = () => { setConditions([...conditions, { id: conditions.length + 1, indicator: 'RSI', period: '14', operator: 'LESS_THAN', value: '30' }]); };
@@ -21,30 +19,24 @@ export default function StrategyBuilder() {
 
   const handleDeploy = async () => {
     if (!session?.user?.email) return alert("Please login first");
-    
-    // Payload now includes Risk Management
     const payload = { 
         email: session.user.email, 
         name: strategyName, 
         symbol: symbol, 
-        logic: { 
-            conditions: conditions,
-            quantity: Number(quantity),
-            sl: Number(stopLoss),
-            tp: Number(takeProfit)
-        } 
+        logic: { conditions: conditions, quantity: Number(quantity), sl: Number(stopLoss), tp: Number(takeProfit) } 
     };
 
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-      const res = await fetch(\\/strategy/create\, { 
+      // MANUAL FIX: No backticks, no backslashes. Pure strings.
+      const res = await fetch(apiUrl + '/strategy/create', { 
         method: 'POST', 
         headers: { 'Content-Type': 'application/json' }, 
         body: JSON.stringify(payload) 
       });
       
       const data = await res.json();
-      if(res.ok) { alert("🚀 STRATEGY DEPLOYED! ID: " + data.id + "\\nRisk: SL " + stopLoss + "% | TP " + takeProfit + "%"); } 
+      if(res.ok) { alert("🚀 STRATEGY DEPLOYED! ID: " + data.id); } 
       else { alert("Deployment Failed"); }
     } catch (e) { alert("Server Error."); }
   };
@@ -55,49 +47,27 @@ export default function StrategyBuilder() {
         <div className="flex items-center gap-4"><Link href="/dashboard" className="p-2 hover:bg-slate-900 rounded-lg transition-colors"><ArrowLeft size={24} className="text-slate-400" /></Link><div><h1 className="text-2xl font-bold flex items-center gap-2">Logic Builder</h1></div></div>
         <button onClick={handleDeploy} className="px-6 py-2 bg-gradient-to-r from-emerald-600 to-cyan-600 rounded-lg font-bold flex items-center gap-2 hover:scale-105 transition-transform"><Play size={18} /> Deploy Live</button>
       </header>
-
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        
-        {/* LEFT COLUMN: ASSET & RISK CONFIG */}
         <div className="space-y-6">
           <div className="bg-slate-900 p-6 rounded-xl border border-slate-800">
             <h3 className="text-lg font-semibold mb-4 text-cyan-400 flex items-center gap-2"><Zap size={18} /> Asset Configuration</h3>
             <div className="space-y-4">
-              <div>
-                <label className="block text-sm text-slate-400 mb-1">Strategy Name</label>
-                <input type="text" value={strategyName} onChange={(e) => setStrategyName(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded p-2" />
-              </div>
-              <div>
-                <label className="block text-sm text-slate-400 mb-1">Pair</label>
-                <select value={symbol} onChange={(e) => setSymbol(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded p-2"><option value="BTCUSD">BTC/USD</option><option value="ETHUSD">ETH/USD</option></select>
-              </div>
+              <div><label className="block text-sm text-slate-400 mb-1">Strategy Name</label><input type="text" value={strategyName} onChange={(e) => setStrategyName(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded p-2" /></div>
+              <div><label className="block text-sm text-slate-400 mb-1">Pair</label><select value={symbol} onChange={(e) => setSymbol(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded p-2"><option value="BTCUSD">BTC/USD</option><option value="ETHUSD">ETH/USD</option></select></div>
             </div>
           </div>
-
-          {/* NEW RISK MANAGEMENT CARD */}
           <div className="bg-slate-900 p-6 rounded-xl border border-slate-800">
             <h3 className="text-lg font-semibold mb-4 text-orange-400 flex items-center gap-2"><AlertTriangle size={18} /> Risk Management</h3>
             <div className="space-y-4">
-              <div>
-                <label className="block text-sm text-slate-400 mb-1">Order Quantity (Contracts)</label>
-                <input type="number" value={quantity} onChange={(e) => setQuantity(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-white font-bold" />
-              </div>
+              <div><label className="block text-sm text-slate-400 mb-1">Quantity</label><input type="number" value={quantity} onChange={(e) => setQuantity(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-700 rounded p-2" /></div>
               <div className="grid grid-cols-2 gap-4">
-                 <div>
-                    <label className="block text-sm text-red-400 mb-1">Stop Loss %</label>
-                    <input type="number" step="0.1" value={stopLoss} onChange={(e) => setStopLoss(Number(e.target.value))} className="w-full bg-slate-950 border border-red-900/50 rounded p-2 text-red-400" />
-                 </div>
-                 <div>
-                    <label className="block text-sm text-emerald-400 mb-1">Take Profit %</label>
-                    <input type="number" step="0.1" value={takeProfit} onChange={(e) => setTakeProfit(Number(e.target.value))} className="w-full bg-slate-950 border border-emerald-900/50 rounded p-2 text-emerald-400" />
-                 </div>
+                 <div><label className="block text-sm text-red-400 mb-1">SL %</label><input type="number" step="0.1" value={stopLoss} onChange={(e) => setStopLoss(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-700 rounded p-2" /></div>
+                 <div><label className="block text-sm text-emerald-400 mb-1">TP %</label><input type="number" step="0.1" value={takeProfit} onChange={(e) => setTakeProfit(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-700 rounded p-2" /></div>
               </div>
             </div>
           </div>
         </div>
-
-        {/* RIGHT COLUMN: CONDITIONS */}
-        <div className="col-span-2 space-y-4"><h3 className="text-lg font-semibold text-emerald-400">Entry Conditions (Buy)</h3><AnimatePresence>{conditions.map((condition, index) => (<motion.div key={condition.id} initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="bg-slate-900 p-4 rounded-xl border border-slate-800 flex items-center gap-4"><div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-sm font-bold text-slate-500">{index === 0 ? 'IF' : 'AND'}</div><div className="bg-slate-950 border border-slate-700 rounded px-3 py-1 text-sm">{condition.indicator}</div><span className="text-slate-500 text-sm">is</span><div className="text-emerald-400 font-medium">{condition.operator}</div><div className="bg-slate-950 border border-slate-700 rounded px-3 py-1 text-sm">{condition.value}</div><button onClick={() => removeCondition(condition.id)} className="ml-auto text-red-400 hover:bg-red-400/10 p-2 rounded"><Trash2 size={16} /></button></motion.div>))}</AnimatePresence><button onClick={addCondition} className="w-full py-4 border-2 border-dashed border-slate-800 rounded-xl text-slate-600 hover:border-slate-600 flex items-center justify-center gap-2"><Plus size={20} /> Add Condition</button></div>
+        <div className="col-span-2 space-y-4"><h3 className="text-lg font-semibold text-emerald-400">Entry Conditions</h3><AnimatePresence>{conditions.map((condition, index) => (<motion.div key={condition.id} initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="bg-slate-900 p-4 rounded-xl border border-slate-800 flex items-center gap-4"><div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-sm font-bold text-slate-500">{index === 0 ? 'IF' : 'AND'}</div><div className="bg-slate-950 border border-slate-700 rounded px-3 py-1 text-sm">{condition.indicator}</div><span className="text-slate-500 text-sm">is</span><div className="text-emerald-400 font-medium">{condition.operator}</div><div className="bg-slate-950 border border-slate-700 rounded px-3 py-1 text-sm">{condition.value}</div><button onClick={() => removeCondition(condition.id)} className="ml-auto text-red-400 hover:bg-red-400/10 p-2 rounded"><Trash2 size={16} /></button></motion.div>))}</AnimatePresence><button onClick={addCondition} className="w-full py-4 border-2 border-dashed border-slate-800 rounded-xl text-slate-600 hover:border-slate-600 flex items-center justify-center gap-2"><Plus size={20} /> Add Condition</button></div>
       </div>
     </div>
   );

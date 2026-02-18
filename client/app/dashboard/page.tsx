@@ -16,7 +16,7 @@ export default function Dashboard() {
   const fetchStrategies = async () => {
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-      // SAFE CODE: Simple addition instead of backticks
+      // MANUAL FIX: Pure strings
       const res = await fetch(apiUrl + '/strategies/' + session?.user?.email);
       const data = await res.json();
       setStrategies(data);
@@ -24,14 +24,12 @@ export default function Dashboard() {
   };
 
   const handleDelete = async (id: number) => {
-    if(!confirm("Are you sure you want to stop and delete this strategy?")) return;
+    if(!confirm("Are you sure?")) return;
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-      // SAFE CODE
       await fetch(apiUrl + '/strategies/' + id, { method: 'DELETE' });
-      // Remove from UI instantly
       setStrategies(strategies.filter((s: any) => s.id !== id));
-    } catch (e) { alert("Error deleting strategy"); }
+    } catch (e) { alert("Error deleting"); }
   };
 
   return (
