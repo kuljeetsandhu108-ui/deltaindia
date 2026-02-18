@@ -1,103 +1,117 @@
 ﻿import asyncio
+import json
+import websockets
 import ccxt.async_support as ccxt
 from sqlalchemy.orm import Session
-from . import models, crud, database, security
+from . import models, database, security
 
-class TradingEngine:
+class RealTimeEngine:
     def __init__(self):
         self.is_running = False
-        # Public instance for fetching prices
-        self.public_exchange = ccxt.delta() 
+        self.delta_ws_url = "wss://socket.delta.exchange"
+        self.active_symbols = set()
 
-    async def fetch_price(self, symbol):
-        try:
-            ticker = await self.public_exchange.fetch_ticker(symbol)
-            return float(ticker['last'])
-        except Exception as e:
-            print(f"Error fetching price: {e}")
-            return 0.0
-
-    async def evaluate_strategies(self, db: Session):
+    async def get_active_symbols(self, db: Session):
+        # Find all unique symbols that have running strategies
         strategies = db.query(models.Strategy).filter(models.Strategy.is_running == True).all()
-        
-        if not strategies:
-            print("--- No active strategies ---")
-            return
+        symbols = list(set([s.symbol for s in strategies]))
+        # Default to BTCUSD if empty so the socket stays open
+        return symbols if symbols else ["BTCUSD"]
 
-        print(f"--- Processing {len(strategies)} Strategies ---")
+    async def execute_trade(self, db: Session, symbol: str, current_price: float):
+        # 1. Find strategies for this symbol
+        strategies = db.query(models.Strategy).filter(
+            models.Strategy.is_running == True,
+            models.Strategy.symbol == symbol
+        ).all()
 
         for strat in strategies:
-            # 1. Get Price
-            current_price = await self.fetch_price(strat.symbol)
-            print(f"Strategy: {strat.name} | {strat.symbol}: ")
-
-            # 2. TRIGGER LIVE TRADE
-            # For testing, we are forcing a BUY.
-            await self.execute_live_trade(db, strat, "BUY", current_price)
-
-    async def execute_live_trade(self, db, strategy, side, price):
-        user = strategy.owner
-        
-        # 2. Decrypt keys
-        if not user.delta_api_key or not user.delta_api_secret:
-            print(f"❌ [SKIPPING] No API Keys for {user.email}")
-            return
-
-        try:
-            api_key = security.decrypt_value(user.delta_api_key)
-            secret = security.decrypt_value(user.delta_api_secret)
-        except Exception as e:
-            print(f"❌ Decryption Failed: {e}")
-            return
-
-        print(f"🔐 Authenticating for {user.email}...")
-
-        # 3. Initialize Exchange with TIME SYNC FIX
-        user_exchange = ccxt.delta({
-            'apiKey': api_key,
-            'secret': secret,
-            'enableRateLimit': True,
-            'options': { 
-                'defaultType': 'future',
-                'adjustForTimeDifference': True,  # <--- THE FIX
-                'recvWindow': 10000              # Allow 10s leeway
-            } 
-        })
-
-        try:
-            # 4. PLACE THE ORDER (Safety: 1 Contract)
-            amount = 1 
-            print(f"🚀 SENDING LIVE {side} ORDER: {amount} contracts of {strategy.symbol}")
+            # 2. CHECK LOGIC (Instant Check)
+            # For this MVP, we are still forcing a BUY for testing.
+            # In Phase 2, we will put the 'If Price > EMA' logic here.
+            print(f"⚡ [TICK] {symbol} @ {current_price} | Checking: {strat.name}")
             
-            # Load markets first to ensure sync
-            await user_exchange.load_markets()
-            
-            order = await user_exchange.create_order(
-                symbol=strategy.symbol,
-                type='market',
-                side=side.lower(),
-                amount=amount
-            )
-            
-            print(f"✅ ORDER SUCCESS! ID: {order['id']}")
-            
-        except Exception as e:
-            print(f"❌ ORDER FAILED: {e}")
-        finally:
-            await user_exchange.close()
+            # --- EXECUTION ---
+            user = strat.owner
+            if not user.delta_api_key: continue
+
+            try:
+                # Decrypt keys
+                api_key = security.decrypt_value(user.delta_api_key)
+                secret = security.decrypt_value(user.delta_api_secret)
+                
+                # Auth & Trade
+                exchange = ccxt.delta({
+                    'apiKey': api_key,
+                    'secret': secret,
+                    'options': { 'defaultType': 'future', 'adjustForTimeDifference': True }
+                })
+                
+                # SAFETY: 1 Contract Limit
+                print(f"🚀 FIRING ORDER: {strat.name}")
+                await exchange.create_order(symbol, 'market', 'buy', 1)
+                await exchange.close()
+                print("✅ ORDER SENT TO EXCHANGE")
+
+            except Exception as e:
+                print(f"❌ Execution Failed: {e}")
 
     async def start(self):
         self.is_running = True
-        print("✅ LIVE TRADING ENGINE STARTED (With Time Sync)")
-        
-        while self.is_running:
-            db = database.SessionLocal()
-            try:
-                await self.evaluate_strategies(db)
-            finally:
-                db.close()
-            
-            # Wait 15 seconds
-            await asyncio.sleep(15)
+        print("✅ REAL-TIME WEBSOCKET ENGINE STARTED")
 
-engine = TradingEngine()
+        while self.is_running:
+            try:
+                # 1. Open Connection
+                async with websockets.connect(self.delta_ws_url) as websocket:
+                    print("🔗 Connected to Delta Exchange WebSocket")
+
+                    # 2. Subscribe to Active Markets
+                    db = database.SessionLocal()
+                    symbols = await self.get_active_symbols(db)
+                    db.close()
+                    
+                    # Delta Exchange Subscribe Message Format
+                    payload = {
+                        "type": "subscribe",
+                        "payload": {
+                            "channels": [
+                                { "name": "v2/ticker", "symbols": symbols }
+                            ]
+                        }
+                    }
+                    await websocket.send(json.dumps(payload))
+                    print(f"📡 Subscribed to: {symbols}")
+
+                    # 3. Listen Loop
+                    async for message in websocket:
+                        if not self.is_running: break
+                        
+                        data = json.loads(message)
+                        
+                        # Handle Heartbeats (Keep-Alive)
+                        if data.get('type') == 'enable_heartbeat':
+                            continue
+
+                        # Handle Price Updates
+                        if data.get('type') == 'v2/ticker':
+                            # Delta sends ticker updates here
+                            # 'mark_price' or 'close'
+                            try:
+                                symbol = data['symbol']
+                                price = float(data['mark_price'])
+                                
+                                # TRIGGER THE TRADES
+                                db_tick = database.SessionLocal()
+                                await self.execute_trade(db_tick, symbol, price)
+                                db_tick.close()
+                                
+                            except:
+                                pass # Ignore incomplete data packets
+
+            except Exception as e:
+                print(f"⚠️ WebSocket Error: {e}")
+                print("Reconnecting in 5 seconds...")
+                await asyncio.sleep(5)
+
+engine = RealTimeEngine()
