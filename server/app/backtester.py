@@ -2,40 +2,50 @@
 import pandas as pd
 import numpy as np
 import traceback
+import ssl
 
 class Backtester:
     def __init__(self):
-        self.exchange = ccxt.delta({'options': {'defaultType': 'future'}})
+        # SSL Context Hack for Docker
+        self.ssl_context = ssl.create_default_context()
+        self.ssl_context.check_hostname = False
+        self.ssl_context.verify_mode = ssl.CERT_NONE
 
     async def fetch_historical_data(self, symbol, timeframe='1h', limit=1000):
+        exchange = None
         try:
             if timeframe == '1m': limit = 1000
-            ohlcv = await self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
-            if not ohlcv: return pd.DataFrame()
+            
+            # Initialize with extended timeout and user agent
+            exchange = ccxt.delta({
+                'options': {'defaultType': 'future'},
+                'timeout': 30000,
+                'enableRateLimit': True,
+                'userAgent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            })
+
+            ohlcv = await exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+            
+            if not ohlcv: 
+                print("⚠️ Warning: Delta returned 0 candles.")
+                return pd.DataFrame()
             
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
             
-            # Ensure numeric types
+            # Numeric conversion
             cols = ['open', 'high', 'low', 'close', 'volume']
             df[cols] = df[cols].apply(pd.to_numeric, errors='coerce')
             
             return df
         except Exception as e:
-            print(f"Data Error: {e}")
+            print(f"❌ Data Fetch Error: {e}")
             return pd.DataFrame()
         finally:
-            await self.exchange.close()
+            if exchange: await exchange.close()
 
-    def calculate_rsi(self, series, period=14):
-        delta = series.diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-        rs = gain / loss
-        return 100 - (100 / (1 + rs))
-
-    def prepare_data(self, df, logic):
-        # PURE PANDAS CALCULATION (No external libs)
+    def calculate_indicators(self, df, logic):
+        # Pure Pandas implementation (No external libs)
         try:
             conditions = logic.get('conditions', [])
             for cond in conditions:
@@ -51,25 +61,17 @@ class Backtester:
                     if col_name in df.columns: continue
 
                     if name == 'rsi':
-                        df[col_name] = self.calculate_rsi(df['close'], length)
+                        delta = df['close'].diff()
+                        gain = (delta.where(delta > 0, 0)).rolling(window=length).mean()
+                        loss = (-delta.where(delta < 0, 0)).rolling(window=length).mean()
+                        rs = gain / loss
+                        df[col_name] = 100 - (100 / (1 + rs))
                     elif name == 'ema':
                         df[col_name] = df['close'].ewm(span=length, adjust=False).mean()
                     elif name == 'sma':
                         df[col_name] = df['close'].rolling(window=length).mean()
-                    
-                    # Basic Bollinger Bands (Standard 2.0 dev)
-                    elif name == 'bb_upper':
-                        sma = df['close'].rolling(window=length).mean()
-                        std = df['close'].rolling(window=length).std()
-                        df[col_name] = sma + (std * 2)
-                    elif name == 'bb_lower':
-                        sma = df['close'].rolling(window=length).mean()
-                        std = df['close'].rolling(window=length).std()
-                        df[col_name] = sma - (std * 2)
-
             return df.fillna(0)
-        except Exception as e:
-            print(f"Math Error: {e}")
+        except:
             return df
 
     def get_val(self, row, item):
@@ -86,8 +88,10 @@ class Backtester:
 
     def run_simulation(self, df, logic):
         try:
-            if df.empty: return {"error": "No Data"}
-            df = self.prepare_data(df, logic)
+            if df.empty: 
+                return {"error": "No Market Data. Try different pair/timeframe."}
+
+            df = self.calculate_indicators(df, logic)
             
             balance = 1000.0
             start_price = df.iloc[0]['close']
@@ -108,16 +112,21 @@ class Backtester:
                 prev_row = df.iloc[i-1]
                 current_price = row['close']
                 
-                # EXIT LOGIC
+                # EXIT
                 if position:
                     exit_price = 0
                     reason = ''
-                    if sl_pct > 0 and row['low'] <= position['sl']:
-                        exit_price = position['sl']
-                        reason = 'SL'
-                    elif tp_pct > 0 and row['high'] >= position['tp']:
-                        exit_price = position['tp']
-                        reason = 'TP'
+                    if sl_pct > 0:
+                        sl_price = position['entry_price'] * (1 - sl_pct/100)
+                        if row['low'] <= sl_price:
+                            exit_price = sl_price
+                            reason = 'SL'
+                    
+                    if tp_pct > 0 and exit_price == 0:
+                        tp_price = position['entry_price'] * (1 + tp_pct/100)
+                        if row['high'] >= tp_price:
+                            exit_price = tp_price
+                            reason = 'TP'
                     
                     if exit_price > 0:
                         pnl = (exit_price - position['entry_price']) * position['qty']
@@ -126,7 +135,7 @@ class Backtester:
                         trades.append({'time': row['timestamp'], 'type': f'SELL ({reason})', 'price': exit_price, 'pnl': net_pnl})
                         position = None
 
-                # ENTRY LOGIC
+                # ENTRY
                 if not position:
                     entry_signal = True
                     for cond in conditions:
@@ -134,22 +143,16 @@ class Backtester:
                         val_right = self.get_val(row, cond['right'])
                         prev_left = self.get_val(prev_row, cond['left'])
                         prev_right = self.get_val(prev_row, cond['right'])
-                        
                         op = cond['operator']
+                        
                         if op == 'GREATER_THAN' and not (val_left > val_right): entry_signal = False
                         if op == 'LESS_THAN' and not (val_left < val_right): entry_signal = False
-                        
-                        if op == 'CROSSES_ABOVE':
-                            if not (val_left > val_right and prev_left <= prev_right): entry_signal = False
-                        
-                        if op == 'CROSSES_BELOW':
-                            if not (val_left < val_right and prev_left >= prev_right): entry_signal = False
+                        if op == 'CROSSES_ABOVE' and not (val_left > val_right and prev_left <= prev_right): entry_signal = False
+                        if op == 'CROSSES_BELOW' and not (val_left < val_right and prev_left >= prev_right): entry_signal = False
 
                     if entry_signal:
                         balance -= (current_price * qty * FEE)
-                        sl = current_price * (1 - sl_pct/100)
-                        tp = current_price * (1 + tp_pct/100)
-                        position = {'entry_price': current_price, 'qty': qty, 'sl': sl, 'tp': tp}
+                        position = {'entry_price': current_price, 'qty': qty}
                         trades.append({'time': row['timestamp'], 'type': 'BUY', 'price': current_price, 'pnl': 0})
 
                 equity_curve.append({
@@ -174,6 +177,6 @@ class Backtester:
             }
         except Exception as e:
             print(traceback.format_exc())
-            return {"error": f"Backtest Error: {str(e)}"}
+            return {"error": f"Internal Error: {str(e)}"}
 
 backtester = Backtester()
