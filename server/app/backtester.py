@@ -2,9 +2,7 @@
 import pandas as pd
 import numpy as np
 from ta import add_all_ta_features
-from ta.trend import EMAIndicator, SMAIndicator, MACD, ADXIndicator
-from ta.momentum import RSIIndicator, StochasticOscillator
-from ta.volatility import BollingerBands, AverageTrueRange
+from ta.utils import dropna
 
 class Backtester:
     def __init__(self):
@@ -22,9 +20,23 @@ class Backtester:
         finally:
             await self.exchange.close()
 
-    def calculate_indicators(self, df, logic):
-        # BASIC DYNAMIC INDICATORS
-        # In a full app, this would use a robust parser.
+    def prepare_data(self, df, logic):
+        # 1. CLEAN DATA
+        df = dropna(df)
+        
+        # 2. ADD ALL INDICATORS (The 'ta' library magic)
+        # This adds 100+ columns like 'trend_ema_14', 'momentum_rsi', etc.
+        try:
+            df = add_all_ta_features(
+                df, open="open", high="high", low="low", close="close", volume="volume", fillna=True
+            )
+        except Exception as e:
+            print(f"Indicator Calc Error: {e}")
+
+        # 3. CUSTOM MAPPING (Frontend Name -> Library Name)
+        # We perform manual calculations for dynamic lengths (e.g. EMA 1 vs EMA 3)
+        # because add_all_ta_features only adds standard defaults.
+        
         conditions = logic.get('conditions', [])
         for cond in conditions:
             for side in ['left', 'right']:
@@ -34,25 +46,53 @@ class Backtester:
                 name = item.get('type')
                 params = item.get('params', {})
                 length = int(params.get('length', 14))
+                col_name = f"{name}_{length}" # e.g. ema_3
                 
-                try:
-                    if name == 'rsi': df[f'rsi'] = RSIIndicator(df['close'], window=length).rsi()
-                    elif name == 'ema': df[f'ema'] = EMAIndicator(df['close'], window=length).ema_indicator()
-                    elif name == 'sma': df[f'sma'] = SMAIndicator(df['close'], window=length).sma_indicator()
-                except: pass
-        return df
+                # Calculate manually to support ANY length
+                if name == 'ema':
+                    df[col_name] = df['close'].ewm(span=length, adjust=False).mean()
+                elif name == 'sma':
+                    df[col_name] = df['close'].rolling(window=length).mean()
+                elif name == 'rsi':
+                    # Manual RSI calculation for custom lengths
+                    delta = df['close'].diff()
+                    gain = (delta.where(delta > 0, 0)).rolling(window=length).mean()
+                    loss = (-delta.where(delta < 0, 0)).rolling(window=length).mean()
+                    rs = gain / loss
+                    df[col_name] = 100 - (100 / (1 + rs))
+                elif name == 'close': df[col_name] = df['close']
+                elif name == 'open': df[col_name] = df['open']
+                elif name == 'high': df[col_name] = df['high']
+                elif name == 'low': df[col_name] = df['low']
+                
+                # Add more custom calcs here if needed (BB, MACD, etc)
+
+        return df.fillna(0)
 
     def get_val(self, row, item):
-        if item['type'] == 'number': return float(item['params']['value'])
+        if item['type'] == 'number': return float(item.get('params', {}).get('value', 0))
         if item['type'] in ['close', 'open', 'high', 'low', 'volume']: return row[item['type']]
-        name = item.get('type')
-        # Simple mapping for MVP
-        if name in ['rsi', 'ema', 'sma']: return row.get(name, 0)
-        return 0
+        
+        # Look for the custom column we made above
+        length = int(item.get('params', {}).get('length', 14))
+        col = f"{item['type']}_{length}"
+        
+        # Fallback to library defaults if custom col missing
+        if col not in row:
+            # Try to map to 'ta' library default names
+            if item['type'] == 'rsi': return row.get('momentum_rsi', 50)
+            if item['type'] == 'adx': return row.get('trend_adx', 0)
+            if item['type'] == 'cci': return row.get('trend_cci', 0)
+            if item['type'] == 'atr': return row.get('volatility_atr', 0)
+            
+        return row.get(col, 0)
 
     def run_simulation(self, df, logic):
+        # PREPARE DATA FIRST
+        df = self.prepare_data(df, logic)
+        
         balance = 1000.0
-        start_price = df.iloc[0]['close']
+        start_price = df.iloc[0]['close'] if len(df) > 0 else 1
         buy_hold_qty = 1000.0 / start_price
         
         equity_curve = []
@@ -63,50 +103,69 @@ class Backtester:
         qty = float(logic.get('quantity', 1))
         sl_pct = float(logic.get('sl', 0))
         tp_pct = float(logic.get('tp', 0))
-        
-        FEE_RATE = 0.0005 # 0.05%
+        FEE_RATE = 0.0005 
 
-        for i, row in df.iterrows():
+        for i in range(1, len(df)):
+            row = df.iloc[i]
+            prev_row = df.iloc[i-1]
             current_price = row['close']
             
-            # BUY & HOLD CALC
-            bh_value = buy_hold_qty * current_price
-
-            # 1. MANAGE OPEN POSITION
+            # --- EXIT LOGIC ---
             if position:
                 exit_price = 0
                 reason = ''
                 
+                # Hit SL?
                 if sl_pct > 0 and row['low'] <= position['sl']:
                     exit_price = position['sl']
+                    # Slippage simulation: If candle opened below SL, we exited at Open
+                    if row['open'] < exit_price: exit_price = row['open']
                     reason = 'SL'
+                
+                # Hit TP?
                 elif tp_pct > 0 and row['high'] >= position['tp']:
                     exit_price = position['tp']
+                    if row['open'] > exit_price: exit_price = row['open']
                     reason = 'TP'
                 
                 if exit_price > 0:
                     gross_pnl = (exit_price - position['entry_price']) * position['qty']
                     fee = (exit_price * position['qty']) * FEE_RATE
                     net_pnl = gross_pnl - fee
-                    
                     balance += net_pnl
                     trades.append({'time': row['timestamp'], 'type': f'SELL ({reason})', 'price': exit_price, 'pnl': net_pnl})
                     position = None
-            
-            # 2. CHECK ENTRY
+
+            # --- ENTRY LOGIC ---
             if not position:
                 entry_signal = True
                 for cond in conditions:
+                    # Current Values
                     val_left = self.get_val(row, cond['left'])
                     val_right = self.get_val(row, cond['right'])
+                    
+                    # Previous Values (For Crossovers)
+                    prev_left = self.get_val(prev_row, cond['left'])
+                    prev_right = self.get_val(prev_row, cond['right'])
+                    
                     op = cond['operator']
+                    
                     if op == 'GREATER_THAN' and not (val_left > val_right): entry_signal = False
                     if op == 'LESS_THAN' and not (val_left < val_right): entry_signal = False
-                    if op == 'CROSSES_ABOVE' and not (val_left > val_right): entry_signal = False 
+                    if op == 'EQUALS' and not (val_left == val_right): entry_signal = False
+                    
+                    # TRUE CROSSOVER LOGIC
+                    if op == 'CROSSES_ABOVE':
+                        # Current: Left > Right  AND  Previous: Left <= Right
+                        if not (val_left > val_right and prev_left <= prev_right): entry_signal = False
+                    
+                    if op == 'CROSSES_BELOW':
+                        # Current: Left < Right  AND  Previous: Left >= Right
+                        if not (val_left < val_right and prev_left >= prev_right): entry_signal = False
 
                 if entry_signal:
                     fee = (current_price * qty) * FEE_RATE
-                    balance -= fee # Entry Fee
+                    balance -= fee
                     
                     sl_price = current_price * (1 - sl_pct/100)
                     tp_price = current_price * (1 + tp_pct/100)
@@ -116,7 +175,7 @@ class Backtester:
             equity_curve.append({
                 'time': row['timestamp'].isoformat(), 
                 'balance': balance,
-                'buy_hold': bh_value
+                'buy_hold': buy_hold_qty * current_price
             })
 
         total_trades = len([t for t in trades if 'SELL' in t['type']])
