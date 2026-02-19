@@ -1,7 +1,7 @@
 ﻿"use client";
 import { useState, useEffect, Suspense } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowLeft, Play, Plus, Trash2, Zap, AlertTriangle, Search, Settings2, Save, BarChart2, Clock } from 'lucide-react';
+import { ArrowLeft, Play, Plus, Trash2, Zap, AlertTriangle, Search, Settings2, Save, BarChart2, Clock, List } from 'lucide-react';
 import Link from 'next/link';
 import { useSession } from 'next-auth/react';
 import { INDICATORS } from '@/lib/indicators';
@@ -16,12 +16,11 @@ function BuilderContent() {
 
   const [strategyName, setStrategyName] = useState("My Pro Algo");
   const [symbol, setSymbol] = useState("BTCUSD");
-  const [timeframe, setTimeframe] = useState("1h"); // NEW
+  const [timeframe, setTimeframe] = useState("1h");
   const [quantity, setQuantity] = useState(1);
   const [stopLoss, setStopLoss] = useState(1.0);
   const [takeProfit, setTakeProfit] = useState(2.0);
   
-  // Default condition
   const [conditions, setConditions] = useState([{ id: 1, left: { type: 'rsi', params: { length: 14 } }, operator: 'LESS_THAN', right: { type: 'number', params: { value: 30 } } }]);
   
   const [backtestLoading, setBacktestLoading] = useState(false);
@@ -38,7 +37,7 @@ function BuilderContent() {
                     setStrategyName(data.name);
                     setSymbol(data.symbol);
                     const logic = data.logic_configuration || {};
-                    setTimeframe(logic.timeframe || "1h"); // Load Timeframe
+                    setTimeframe(logic.timeframe || "1h");
                     setQuantity(logic.quantity || 1);
                     setStopLoss(logic.sl || 0);
                     setTakeProfit(logic.tp || 0);
@@ -62,7 +61,6 @@ function BuilderContent() {
 
   const handleDeploy = async () => {
     if (!session?.user?.email) return alert("Please login first");
-    // Pass timeframe in payload
     const payload = { email: session.user.email, name: strategyName, symbol, logic: { conditions, timeframe, quantity: Number(quantity), sl: Number(stopLoss), tp: Number(takeProfit) } };
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -99,6 +97,11 @@ function BuilderContent() {
     );
   };
 
+  // Helper for IST Time
+  const formatIST = (isoString: string) => {
+      return new Date(isoString).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'medium' });
+  };
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 pb-20">
         <div className="col-span-1 space-y-6">
@@ -107,15 +110,9 @@ function BuilderContent() {
             <div className="space-y-4">
                 <div><label className="block text-sm text-slate-400 mb-1">Name</label><input type="text" value={strategyName} onChange={(e) => setStrategyName(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded p-2" /></div>
                 <div><label className="block text-sm text-slate-400 mb-1">Pair</label><select value={symbol} onChange={(e) => setSymbol(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded p-2"><option value="BTCUSD">BTC/USD</option><option value="ETHUSD">ETH/USD</option><option value="XRPUSD">XRP/USD</option></select></div>
-                {/* TIMEFRAME SELECTOR */}
                 <div><label className="block text-sm text-slate-400 mb-1 flex items-center gap-2"><Clock size={12}/> Timeframe</label>
                 <select value={timeframe} onChange={(e) => setTimeframe(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded p-2">
-                    <option value="1m">1 Minute (Scalping)</option>
-                    <option value="5m">5 Minute</option>
-                    <option value="15m">15 Minute</option>
-                    <option value="1h">1 Hour (Swing)</option>
-                    <option value="4h">4 Hour</option>
-                    <option value="1d">1 Day</option>
+                    <option value="1m">1 Minute (Scalping)</option><option value="5m">5 Minute</option><option value="15m">15 Minute</option><option value="1h">1 Hour (Swing)</option><option value="4h">4 Hour</option><option value="1d">1 Day</option>
                 </select></div>
             </div>
           </div>
@@ -135,28 +132,59 @@ function BuilderContent() {
             <h3 className="text-lg font-semibold text-emerald-400 flex items-center gap-2"><Settings2 size={18}/> Entry Logic</h3>
             <div className="space-y-4">{conditions.map((c, i) => (<motion.div key={c.id} initial={{opacity:0, y:10}} animate={{opacity:1, y:0}} className="flex flex-col md:flex-row items-center gap-4 bg-slate-900 p-4 rounded-xl border border-slate-800 relative"><div className="text-slate-500 font-bold bg-slate-800 w-10 h-10 rounded-full flex items-center justify-center shrink-0">{i === 0 ? 'IF' : 'AND'}</div><IndicatorSelect data={c.left} onChange={(f: string, v: any) => updateCondition(c.id, 'left', f, v)} onParamChange={(p: string, v: any) => updateParam(c.id, 'left', p, v)} /><select className="bg-slate-950 text-emerald-400 font-bold border border-slate-700 rounded px-3 py-2 outline-none" value={c.operator} onChange={(e) => { const newConds = [...conditions]; newConds.find(x => x.id === c.id)!.operator = e.target.value; setConditions(newConds); }}><option value="CROSSES_ABOVE">Crosses Above</option><option value="CROSSES_BELOW">Crosses Below</option><option value="GREATER_THAN">Greater Than</option><option value="LESS_THAN">Less Than</option></select><IndicatorSelect data={c.right} onChange={(f: string, v: any) => updateCondition(c.id, 'right', f, v)} onParamChange={(p: string, v: any) => updateParam(c.id, 'right', p, v)} /><button onClick={() => setConditions(conditions.filter(x => x.id !== c.id))} className="absolute top-2 right-2 text-slate-600 hover:text-red-400"><Trash2 size={16}/></button></motion.div>))}</div><button onClick={addCondition} className="w-full py-4 border-2 border-dashed border-slate-800 rounded-xl text-slate-600 hover:border-slate-600 flex items-center justify-center gap-2 transition-all"><Plus size={20} /> Add Logic Block</button>
             
-            {/* BACKTEST RESULTS WITH FEES & BENCHMARK */}
+            {/* BACKTEST RESULTS WITH TRADE LOG */}
             {backtestResult && (
-                <motion.div initial={{opacity:0, y:20}} animate={{opacity:1, y:0}} className="mt-8 bg-slate-900 rounded-2xl border border-slate-700 p-6">
-                    <h3 className="text-xl font-bold mb-6 flex items-center gap-2 text-white"><BarChart2 className="text-blue-400"/> Backtest (Last 1000 Candles)</h3>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-                        <div className="bg-slate-950 p-4 rounded-xl border border-slate-800"><div className="text-slate-500 text-xs uppercase mb-1">Final Balance</div><div className="text-2xl font-bold text-white">${backtestResult.metrics.final_balance}</div></div>
-                        <div className="bg-slate-950 p-4 rounded-xl border border-slate-800"><div className="text-slate-500 text-xs uppercase mb-1">Total Return</div><div className={'text-2xl font-bold ' + (backtestResult.metrics.total_return_pct >= 0 ? 'text-emerald-400' : 'text-red-400')}>{backtestResult.metrics.total_return_pct}%</div></div>
-                        <div className="bg-slate-950 p-4 rounded-xl border border-slate-800"><div className="text-slate-500 text-xs uppercase mb-1">Win Rate</div><div className="text-2xl font-bold text-blue-400">{backtestResult.metrics.win_rate}%</div></div>
-                        <div className="bg-slate-950 p-4 rounded-xl border border-slate-800"><div className="text-slate-500 text-xs uppercase mb-1">Trades</div><div className="text-2xl font-bold text-white">{backtestResult.metrics.total_trades}</div></div>
+                <motion.div initial={{opacity:0, y:20}} animate={{opacity:1, y:0}} className="mt-8">
+                    <div className="bg-slate-900 rounded-2xl border border-slate-700 p-6 mb-6">
+                        <h3 className="text-xl font-bold mb-6 flex items-center gap-2 text-white"><BarChart2 className="text-blue-400"/> Backtest Results</h3>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+                            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800"><div className="text-slate-500 text-xs uppercase mb-1">Final Balance</div><div className="text-2xl font-bold text-white"></div></div>
+                            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800"><div className="text-slate-500 text-xs uppercase mb-1">Total Return</div><div className={'text-2xl font-bold ' + (backtestResult.metrics.total_return_pct >= 0 ? 'text-emerald-400' : 'text-red-400')}>{backtestResult.metrics.total_return_pct}%</div></div>
+                            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800"><div className="text-slate-500 text-xs uppercase mb-1">Win Rate</div><div className="text-2xl font-bold text-blue-400">{backtestResult.metrics.win_rate}%</div></div>
+                            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800"><div className="text-slate-500 text-xs uppercase mb-1">Trades</div><div className="text-2xl font-bold text-white">{backtestResult.metrics.total_trades}</div></div>
+                        </div>
+                        <div className="h-64 w-full bg-slate-950/50 rounded-xl border border-slate-800 p-2">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <LineChart data={backtestResult.equity}>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                                    <XAxis dataKey="time" hide />
+                                    <YAxis domain={['auto', 'auto']} stroke="#94a3b8" fontSize={10} />
+                                    <Tooltip contentStyle={{backgroundColor: '#0f172a', border: '1px solid #334155'}} />
+                                    <Legend />
+                                    <Line name="Strategy" type="monotone" dataKey="balance" stroke="#3b82f6" strokeWidth={2} dot={false} />
+                                    <Line name="Buy & Hold" type="monotone" dataKey="buy_hold" stroke="#eab308" strokeWidth={2} dot={false} />
+                                </LineChart>
+                            </ResponsiveContainer>
+                        </div>
                     </div>
-                    <div className="h-64 w-full bg-slate-950/50 rounded-xl border border-slate-800 p-2">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <LineChart data={backtestResult.equity}>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                                <XAxis dataKey="time" hide />
-                                <YAxis domain={['auto', 'auto']} stroke="#94a3b8" fontSize={10} />
-                                <Tooltip contentStyle={{backgroundColor: '#0f172a', border: '1px solid #334155'}} />
-                                <Legend />
-                                <Line name="Strategy" type="monotone" dataKey="balance" stroke="#3b82f6" strokeWidth={2} dot={false} />
-                                <Line name="Buy & Hold" type="monotone" dataKey="buy_hold" stroke="#eab308" strokeWidth={2} dot={false} />
-                            </LineChart>
-                        </ResponsiveContainer>
+
+                    {/* NEW TRADE LOG TABLE */}
+                    <div className="bg-slate-900 rounded-2xl border border-slate-700 overflow-hidden">
+                        <div className="p-4 border-b border-slate-700 font-bold flex items-center gap-2"><List size={18}/> Trade Log (IST)</div>
+                        <div className="max-h-80 overflow-y-auto">
+                            <table className="w-full text-sm text-left">
+                                <thead className="text-xs text-slate-500 uppercase bg-slate-950 sticky top-0">
+                                    <tr>
+                                        <th className="px-6 py-3">Time</th>
+                                        <th className="px-6 py-3">Action</th>
+                                        <th className="px-6 py-3">Price</th>
+                                        <th className="px-6 py-3 text-right">PnL</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {backtestResult.trades.slice().reverse().map((t: any, i: number) => (
+                                        <tr key={i} className="border-b border-slate-800/50 hover:bg-slate-800/30">
+                                            <td className="px-6 py-4 text-slate-400">{formatIST(t.time)}</td>
+                                            <td className={'px-6 py-4 font-bold ' + (t.type.includes('BUY') ? 'text-emerald-400' : 'text-red-400')}>{t.type}</td>
+                                            <td className="px-6 py-4"></td>
+                                            <td className={'px-6 py-4 text-right font-bold ' + (t.pnl > 0 ? 'text-emerald-400' : t.pnl < 0 ? 'text-red-400' : 'text-slate-500')}>
+                                                {t.pnl ? (t.pnl > 0 ? '+' : '') + '$' + t.pnl.toFixed(2) : '-'}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </motion.div>
             )}
