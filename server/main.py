@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from app import models, database, schemas, crud
 from app.engine import engine as trading_engine
-from app.backtester import backtester # Import Backtester
+from app.backtester import backtester
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -17,11 +17,7 @@ models.Base.metadata.create_all(bind=database.engine)
 app = FastAPI(title="AlgoTradeIndia Engine", lifespan=lifespan)
 
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
 )
 
 @app.get("/")
@@ -82,19 +78,19 @@ def update_strategy(id: int, strat: schemas.StrategyInput, db: Session = Depends
     db.commit()
     return {"status": "Strategy Updated", "id": id}
 
-# --- NEW BACKTEST ENDPOINT ---
 @app.post("/strategy/backtest")
 async def run_backtest(strat: schemas.StrategyInput):
-    # 1. Fetch History
-    df = await backtester.fetch_historical_data(strat.symbol, '1h', 1000)
+    # EXTRACT TIMEFRAME (Default 1h)
+    timeframe = strat.logic.get('timeframe', '1h')
     
-    if df.empty:
-        return {"error": "Failed to fetch data from Delta Exchange"}
+    # FETCH
+    df = await backtester.fetch_historical_data(strat.symbol, timeframe, 1000)
+    if df.empty: return {"error": "Failed to fetch data"}
 
-    # 2. Calculate Indicators
+    # CALC
     df = backtester.calculate_indicators(df, strat.logic)
 
-    # 3. Run Sim
+    # RUN SIM
     results = backtester.run_simulation(df, strat.logic)
     
     return results
