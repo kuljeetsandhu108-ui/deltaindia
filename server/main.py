@@ -16,8 +16,13 @@ async def lifespan(app: FastAPI):
 models.Base.metadata.create_all(bind=database.engine)
 app = FastAPI(title="AlgoTradeIndia Engine", lifespan=lifespan)
 
+# --- THE CORS FIX ---
 app.add_middleware(
-    CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
+    CORSMiddleware,
+    allow_origins=["*"], # Allow ALL domains
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 @app.get("/")
@@ -80,17 +85,14 @@ def update_strategy(id: int, strat: schemas.StrategyInput, db: Session = Depends
 
 @app.post("/strategy/backtest")
 async def run_backtest(strat: schemas.StrategyInput):
-    # EXTRACT TIMEFRAME (Default 1h)
+    # EXTRACT TIMEFRAME
     timeframe = strat.logic.get('timeframe', '1h')
     
-    # FETCH
+    # 1. Fetch
     df = await backtester.fetch_historical_data(strat.symbol, timeframe, 1000)
-    if df.empty: return {"error": "Failed to fetch data"}
+    if df.empty: return {"error": f"Could not fetch data for {strat.symbol}"}
 
-    # CALC
-    df = backtester.calculate_indicators(df, strat.logic)
-
-    # RUN SIM
+    # 2. Run
     results = backtester.run_simulation(df, strat.logic)
     
     return results
