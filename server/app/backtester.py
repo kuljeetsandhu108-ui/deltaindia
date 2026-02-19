@@ -6,7 +6,6 @@ import ssl
 
 class Backtester:
     def __init__(self):
-        # SSL Context Hack for Docker
         self.ssl_context = ssl.create_default_context()
         self.ssl_context.check_hostname = False
         self.ssl_context.verify_mode = ssl.CERT_NONE
@@ -16,7 +15,6 @@ class Backtester:
         try:
             if timeframe == '1m': limit = 1000
             
-            # Initialize with extended timeout and user agent
             exchange = ccxt.delta({
                 'options': {'defaultType': 'future'},
                 'timeout': 30000,
@@ -26,26 +24,23 @@ class Backtester:
 
             ohlcv = await exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
             
-            if not ohlcv: 
-                print("⚠️ Warning: Delta returned 0 candles.")
-                return pd.DataFrame()
+            if not ohlcv: return pd.DataFrame()
             
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
             
-            # Numeric conversion
             cols = ['open', 'high', 'low', 'close', 'volume']
             df[cols] = df[cols].apply(pd.to_numeric, errors='coerce')
             
             return df
         except Exception as e:
-            print(f"❌ Data Fetch Error: {e}")
+            print(f"Data Fetch Error: {e}")
             return pd.DataFrame()
         finally:
             if exchange: await exchange.close()
 
-    def calculate_indicators(self, df, logic):
-        # Pure Pandas implementation (No external libs)
+    def prepare_data(self, df, logic):
+        # Pure Pandas implementation
         try:
             conditions = logic.get('conditions', [])
             for cond in conditions:
@@ -71,8 +66,7 @@ class Backtester:
                     elif name == 'sma':
                         df[col_name] = df['close'].rolling(window=length).mean()
             return df.fillna(0)
-        except:
-            return df
+        except: return df
 
     def get_val(self, row, item):
         try:
@@ -88,17 +82,16 @@ class Backtester:
 
     def run_simulation(self, df, logic):
         try:
-            if df.empty: 
-                return {"error": "No Market Data. Try different pair/timeframe."}
+            if df.empty: return {"error": "No Market Data"}
 
-            df = self.calculate_indicators(df, logic)
+            df = self.prepare_data(df, logic)
             
             balance = 1000.0
             start_price = df.iloc[0]['close']
             buy_hold_qty = 1000.0 / start_price if start_price > 0 else 0
             
             equity_curve = []
-            trades = []
+            closed_trades = [] # Stores completed round-trips
             position = None 
             
             conditions = logic.get('conditions', [])
@@ -112,7 +105,7 @@ class Backtester:
                 prev_row = df.iloc[i-1]
                 current_price = row['close']
                 
-                # EXIT
+                # --- EXIT LOGIC ---
                 if position:
                     exit_price = 0
                     reason = ''
@@ -120,22 +113,36 @@ class Backtester:
                         sl_price = position['entry_price'] * (1 - sl_pct/100)
                         if row['low'] <= sl_price:
                             exit_price = sl_price
-                            reason = 'SL'
+                            reason = 'Stop Loss'
                     
                     if tp_pct > 0 and exit_price == 0:
                         tp_price = position['entry_price'] * (1 + tp_pct/100)
                         if row['high'] >= tp_price:
                             exit_price = tp_price
-                            reason = 'TP'
+                            reason = 'Take Profit'
                     
                     if exit_price > 0:
-                        pnl = (exit_price - position['entry_price']) * position['qty']
-                        net_pnl = pnl - (exit_price * position['qty'] * FEE)
+                        # Calculate Profit
+                        gross_pnl = (exit_price - position['entry_price']) * position['qty']
+                        # Fees (Entry + Exit)
+                        total_fees = (position['entry_price'] * position['qty'] * FEE) + (exit_price * position['qty'] * FEE)
+                        net_pnl = gross_pnl - total_fees
+                        
                         balance += net_pnl
-                        trades.append({'time': row['timestamp'], 'type': f'SELL ({reason})', 'price': exit_price, 'pnl': net_pnl})
+                        
+                        # RECORD THE COMPLETED TRADE
+                        closed_trades.append({
+                            'entry_time': position['entry_time'],
+                            'exit_time': row['timestamp'],
+                            'entry_price': position['entry_price'],
+                            'exit_price': exit_price,
+                            'qty': position['qty'],
+                            'pnl': net_pnl,
+                            'reason': reason
+                        })
                         position = None
 
-                # ENTRY
+                # --- ENTRY LOGIC ---
                 if not position:
                     entry_signal = True
                     for cond in conditions:
@@ -151,9 +158,12 @@ class Backtester:
                         if op == 'CROSSES_BELOW' and not (val_left < val_right and prev_left >= prev_right): entry_signal = False
 
                     if entry_signal:
-                        balance -= (current_price * qty * FEE)
-                        position = {'entry_price': current_price, 'qty': qty}
-                        trades.append({'time': row['timestamp'], 'type': 'BUY', 'price': current_price, 'pnl': 0})
+                        # Don't deduct fee from balance yet, do it on close
+                        position = {
+                            'entry_time': row['timestamp'], 
+                            'entry_price': current_price, 
+                            'qty': qty
+                        }
 
                 equity_curve.append({
                     'time': row['timestamp'].isoformat(), 
@@ -161,8 +171,8 @@ class Backtester:
                     'buy_hold': buy_hold_qty * current_price
                 })
 
-            total_trades = len([t for t in trades if 'SELL' in t['type']])
-            wins = len([t for t in trades if t['pnl'] > 0])
+            wins = len([t for t in closed_trades if t['pnl'] > 0])
+            total_trades = len(closed_trades)
             win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
             
             return {
@@ -172,11 +182,11 @@ class Backtester:
                     "win_rate": round(win_rate, 1),
                     "total_return_pct": round(((balance - 1000)/1000)*100, 2)
                 },
-                "trades": trades[-50:],
+                "trades": closed_trades[-50:], # Last 50 completed trades
                 "equity": equity_curve[::5]
             }
         except Exception as e:
             print(traceback.format_exc())
-            return {"error": f"Internal Error: {str(e)}"}
+            return {"error": f"Backtest Crash: {str(e)}"}
 
 backtester = Backtester()

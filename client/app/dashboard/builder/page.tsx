@@ -22,7 +22,6 @@ function BuilderContent() {
   const [takeProfit, setTakeProfit] = useState(2.0);
   
   const [conditions, setConditions] = useState([{ id: 1, left: { type: 'rsi', params: { length: 14 } }, operator: 'LESS_THAN', right: { type: 'number', params: { value: 30 } } }]);
-  
   const [backtestLoading, setBacktestLoading] = useState(false);
   const [backtestResult, setBacktestResult] = useState<any>(null);
 
@@ -81,7 +80,8 @@ function BuilderContent() {
         const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
         const res = await fetch(apiUrl + '/strategy/backtest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
         const data = await res.json();
-        setBacktestResult(data);
+        if (data.error) { alert("Error: " + data.error); }
+        else { setBacktestResult(data); }
     } catch(e) { alert("Backtest Failed"); }
     setBacktestLoading(false);
   };
@@ -97,9 +97,8 @@ function BuilderContent() {
     );
   };
 
-  // Helper for IST Time
   const formatIST = (isoString: string) => {
-      return new Date(isoString).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'medium' });
+      return new Date(isoString).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'short' });
   };
 
   return (
@@ -138,7 +137,7 @@ function BuilderContent() {
                     <div className="bg-slate-900 rounded-2xl border border-slate-700 p-6 mb-6">
                         <h3 className="text-xl font-bold mb-6 flex items-center gap-2 text-white"><BarChart2 className="text-blue-400"/> Backtest Results</h3>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-                            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800"><div className="text-slate-500 text-xs uppercase mb-1">Final Balance</div><div className="text-2xl font-bold text-white"></div></div>
+                            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800"><div className="text-slate-500 text-xs uppercase mb-1">Final Balance</div><div className="text-2xl font-bold text-white">${backtestResult.metrics.final_balance}</div></div>
                             <div className="bg-slate-950 p-4 rounded-xl border border-slate-800"><div className="text-slate-500 text-xs uppercase mb-1">Total Return</div><div className={'text-2xl font-bold ' + (backtestResult.metrics.total_return_pct >= 0 ? 'text-emerald-400' : 'text-red-400')}>{backtestResult.metrics.total_return_pct}%</div></div>
                             <div className="bg-slate-950 p-4 rounded-xl border border-slate-800"><div className="text-slate-500 text-xs uppercase mb-1">Win Rate</div><div className="text-2xl font-bold text-blue-400">{backtestResult.metrics.win_rate}%</div></div>
                             <div className="bg-slate-950 p-4 rounded-xl border border-slate-800"><div className="text-slate-500 text-xs uppercase mb-1">Trades</div><div className="text-2xl font-bold text-white">{backtestResult.metrics.total_trades}</div></div>
@@ -158,27 +157,31 @@ function BuilderContent() {
                         </div>
                     </div>
 
-                    {/* NEW TRADE LOG TABLE */}
+                    {/* NEW ROUND TRIP TRADE LOG */}
                     <div className="bg-slate-900 rounded-2xl border border-slate-700 overflow-hidden">
                         <div className="p-4 border-b border-slate-700 font-bold flex items-center gap-2"><List size={18}/> Trade Log (IST)</div>
                         <div className="max-h-80 overflow-y-auto">
                             <table className="w-full text-sm text-left">
                                 <thead className="text-xs text-slate-500 uppercase bg-slate-950 sticky top-0">
                                     <tr>
-                                        <th className="px-6 py-3">Time</th>
-                                        <th className="px-6 py-3">Action</th>
-                                        <th className="px-6 py-3">Price</th>
+                                        <th className="px-6 py-3">Entry Time</th>
+                                        <th className="px-6 py-3">Exit Time</th>
+                                        <th className="px-6 py-3">Entry Price</th>
+                                        <th className="px-6 py-3">Exit Price</th>
+                                        <th className="px-6 py-3">Reason</th>
                                         <th className="px-6 py-3 text-right">PnL</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     {backtestResult.trades.slice().reverse().map((t: any, i: number) => (
                                         <tr key={i} className="border-b border-slate-800/50 hover:bg-slate-800/30">
-                                            <td className="px-6 py-4 text-slate-400">{formatIST(t.time)}</td>
-                                            <td className={'px-6 py-4 font-bold ' + (t.type.includes('BUY') ? 'text-emerald-400' : 'text-red-400')}>{t.type}</td>
-                                            <td className="px-6 py-4"></td>
-                                            <td className={'px-6 py-4 text-right font-bold ' + (t.pnl > 0 ? 'text-emerald-400' : t.pnl < 0 ? 'text-red-400' : 'text-slate-500')}>
-                                                {t.pnl ? (t.pnl > 0 ? '+' : '') + '$' + t.pnl.toFixed(2) : '-'}
+                                            <td className="px-6 py-4 text-slate-400">{formatIST(t.entry_time)}</td>
+                                            <td className="px-6 py-4 text-slate-400">{formatIST(t.exit_time)}</td>
+                                            <td className="px-6 py-4">${t.entry_price.toFixed(2)}</td>
+                                            <td className="px-6 py-4">${t.exit_price.toFixed(2)}</td>
+                                            <td className="px-6 py-4 text-xs font-bold uppercase">{t.reason}</td>
+                                            <td className={'px-6 py-4 text-right font-bold ' + (t.pnl > 0 ? 'text-emerald-400' : 'text-red-400')}>
+                                                {t.pnl > 0 ? '+' : ''}${t.pnl.toFixed(2)}
                                             </td>
                                         </tr>
                                     ))}
