@@ -1,5 +1,5 @@
 ﻿"use client";
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowLeft, Play, Plus, Trash2, Zap, AlertTriangle, Search, Settings2, Save } from 'lucide-react';
 import Link from 'next/link';
@@ -7,12 +7,13 @@ import { useSession } from 'next-auth/react';
 import { INDICATORS } from '@/lib/indicators';
 import { useSearchParams, useRouter } from 'next/navigation';
 
-export default function StrategyBuilder() {
+// 1. WE MOVED THE LOGIC INTO THIS INNER COMPONENT
+function BuilderContent() {
   const { data: session } = useSession();
   const searchParams = useSearchParams();
   const router = useRouter();
   
-  const editId = searchParams.get('edit'); // Get ID from URL
+  const editId = searchParams.get('edit'); 
 
   const [strategyName, setStrategyName] = useState("My Alpha Algo 1");
   const [symbol, setSymbol] = useState("BTCUSD");
@@ -28,7 +29,6 @@ export default function StrategyBuilder() {
     }
   ]);
 
-  // LOAD DATA IF EDITING
   useEffect(() => {
     if (editId && session?.user?.email) {
         const fetchDetails = async () => {
@@ -39,7 +39,6 @@ export default function StrategyBuilder() {
                     const data = await res.json();
                     setStrategyName(data.name);
                     setSymbol(data.symbol);
-                    // Load Config
                     const logic = data.logic_configuration;
                     setQuantity(logic.quantity || 1);
                     setStopLoss(logic.sl || 0);
@@ -96,7 +95,6 @@ export default function StrategyBuilder() {
       let url = apiUrl + '/strategy/create';
       let method = 'POST';
 
-      // IF EDITING, USE PUT
       if (editId) {
           url = apiUrl + '/strategy/' + editId;
           method = 'PUT';
@@ -110,12 +108,11 @@ export default function StrategyBuilder() {
       
       if(res.ok) { 
           alert(editId ? "✅ STRATEGY UPDATED!" : "🚀 STRATEGY DEPLOYED!");
-          router.push('/dashboard'); // Go back to dashboard
+          router.push('/dashboard'); 
       } else { alert("Operation Failed"); }
     } catch (e) { alert("Server Error."); }
   };
 
-  // Helper Component
   const IndicatorSelect = ({ side, data, onChange, onParamChange }: any) => {
     const selectedDef = INDICATORS.find(i => i.value === data.type);
     return (
@@ -141,21 +138,35 @@ export default function StrategyBuilder() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white p-6">
-      <header className="flex justify-between items-center mb-8 border-b border-slate-800 pb-6">
-        <div className="flex items-center gap-4"><Link href="/dashboard" className="p-2 hover:bg-slate-900 rounded-lg transition-colors"><ArrowLeft size={24} className="text-slate-400" /></Link><div><h1 className="text-2xl font-bold flex items-center gap-2">{editId ? 'Edit Strategy' : 'Logic Builder'}</h1></div></div>
-        <button onClick={handleDeploy} className="px-6 py-2 bg-gradient-to-r from-emerald-600 to-cyan-600 rounded-lg font-bold flex items-center gap-2 hover:scale-105 transition-transform">
-            {editId ? <Save size={18} /> : <Play size={18} />} {editId ? 'Update Strategy' : 'Deploy Live'}
-        </button>
-      </header>
-
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+    <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
         <div className="col-span-1 space-y-6">
           <div className="bg-slate-900 p-6 rounded-xl border border-slate-800"><h3 className="text-lg font-semibold mb-4 text-cyan-400 flex items-center gap-2"><Zap size={18} /> Asset</h3><div className="space-y-4"><div><label className="block text-sm text-slate-400 mb-1">Name</label><input type="text" value={strategyName} onChange={(e) => setStrategyName(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded p-2" /></div><div><label className="block text-sm text-slate-400 mb-1">Pair</label><select value={symbol} onChange={(e) => setSymbol(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded p-2"><option value="BTCUSD">BTC/USD</option><option value="ETHUSD">ETH/USD</option></select></div></div></div>
           <div className="bg-slate-900 p-6 rounded-xl border border-slate-800"><h3 className="text-lg font-semibold mb-4 text-orange-400 flex items-center gap-2"><AlertTriangle size={18} /> Risk</h3><div className="space-y-4"><div><label className="block text-sm text-slate-400 mb-1">Qty</label><input type="number" value={quantity} onChange={(e) => setQuantity(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-700 rounded p-2" /></div><div className="grid grid-cols-2 gap-4"><div><label className="block text-sm text-red-400 mb-1">SL %</label><input type="number" step="0.1" value={stopLoss} onChange={(e) => setStopLoss(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-700 rounded p-2" /></div><div><label className="block text-sm text-emerald-400 mb-1">TP %</label><input type="number" step="0.1" value={takeProfit} onChange={(e) => setTakeProfit(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-700 rounded p-2" /></div></div></div></div>
+          
+          {/* DEPLOY BUTTON MOVED HERE FOR MOBILE LAYOUT */}
+          <button onClick={handleDeploy} className="w-full py-4 bg-gradient-to-r from-emerald-600 to-cyan-600 rounded-lg font-bold flex items-center justify-center gap-2 hover:scale-105 transition-transform">
+            {editId ? <Save size={18} /> : <Play size={18} />} {editId ? 'Update Strategy' : 'Deploy Live'}
+          </button>
         </div>
+
         <div className="col-span-3 space-y-4"><h3 className="text-lg font-semibold text-emerald-400 flex items-center gap-2"><Settings2 size={18}/> Entry Logic</h3><div className="space-y-4">{conditions.map((c, i) => (<motion.div key={c.id} initial={{opacity:0, y:10}} animate={{opacity:1, y:0}} className="flex flex-col md:flex-row items-center gap-4 bg-slate-900 p-4 rounded-xl border border-slate-800 relative"><div className="text-slate-500 font-bold bg-slate-800 w-10 h-10 rounded-full flex items-center justify-center shrink-0">{i === 0 ? 'IF' : 'AND'}</div><IndicatorSelect data={c.left} onChange={(f: string, v: any) => updateCondition(c.id, 'left', f, v)} onParamChange={(p: string, v: any) => updateParam(c.id, 'left', p, v)} /><select className="bg-slate-950 text-emerald-400 font-bold border border-slate-700 rounded px-3 py-2 outline-none" value={c.operator} onChange={(e) => { const newConds = [...conditions]; newConds.find(x => x.id === c.id)!.operator = e.target.value; setConditions(newConds); }}><option value="CROSSES_ABOVE">Crosses Above</option><option value="CROSSES_BELOW">Crosses Below</option><option value="GREATER_THAN">Greater Than</option><option value="LESS_THAN">Less Than</option></select><IndicatorSelect data={c.right} onChange={(f: string, v: any) => updateCondition(c.id, 'right', f, v)} onParamChange={(p: string, v: any) => updateParam(c.id, 'right', p, v)} /><button onClick={() => setConditions(conditions.filter(x => x.id !== c.id))} className="absolute top-2 right-2 text-slate-600 hover:text-red-400"><Trash2 size={16}/></button></motion.div>))}</div><button onClick={addCondition} className="w-full py-4 border-2 border-dashed border-slate-800 rounded-xl text-slate-600 hover:border-slate-600 flex items-center justify-center gap-2 transition-all"><Plus size={20} /> Add Logic Block</button></div>
-      </div>
+    </div>
+  );
+}
+
+// 2. MAIN COMPONENT (THE FIX)
+// We wrap the Logic in Suspense so Next.js doesn't crash during build
+export default function StrategyBuilder() {
+  return (
+    <div className="min-h-screen bg-slate-950 text-white p-6">
+      <header className="flex justify-between items-center mb-8 border-b border-slate-800 pb-6">
+        <div className="flex items-center gap-4"><Link href="/dashboard" className="p-2 hover:bg-slate-900 rounded-lg transition-colors"><ArrowLeft size={24} className="text-slate-400" /></Link><div><h1 className="text-2xl font-bold flex items-center gap-2">Logic Builder</h1></div></div>
+      </header>
+      
+      {/* THE MAGIC WRAPPER */}
+      <Suspense fallback={<div className="text-slate-500">Loading Builder...</div>}>
+        <BuilderContent />
+      </Suspense>
     </div>
   );
 }
