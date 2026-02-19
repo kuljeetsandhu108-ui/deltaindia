@@ -1,16 +1,23 @@
 ﻿import ccxt.async_support as ccxt
 import pandas as pd
 import numpy as np
-from ta import add_all_ta_features
-from ta.utils import dropna
+from ta.trend import EMAIndicator, SMAIndicator
+from ta.momentum import RSIIndicator
+from ta.volatility import BollingerBands, AverageTrueRange
 
 class Backtester:
     def __init__(self):
+        # Use Global Delta for history (Data is the same)
         self.exchange = ccxt.delta({'options': {'defaultType': 'future'}})
 
     async def fetch_historical_data(self, symbol, timeframe='1h', limit=1000):
         try:
+            # Map timeframe format if needed
+            if timeframe == '1m': limit = 1000
+            
             ohlcv = await self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+            if not ohlcv: return pd.DataFrame()
+            
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
             return df
@@ -21,21 +28,8 @@ class Backtester:
             await self.exchange.close()
 
     def prepare_data(self, df, logic):
-        # 1. CLEAN DATA
-        df = dropna(df)
-        
-        # 2. ADD ALL INDICATORS (The 'ta' library magic)
-        # This adds 100+ columns like 'trend_ema_14', 'momentum_rsi', etc.
-        try:
-            df = add_all_ta_features(
-                df, open="open", high="high", low="low", close="close", volume="volume", fillna=True
-            )
-        except Exception as e:
-            print(f"Indicator Calc Error: {e}")
-
-        # 3. CUSTOM MAPPING (Frontend Name -> Library Name)
-        # We perform manual calculations for dynamic lengths (e.g. EMA 1 vs EMA 3)
-        # because add_all_ta_features only adds standard defaults.
+        # MANUAL CALCULATION (Safe Mode)
+        # Only calculate what is requested in the logic
         
         conditions = logic.get('conditions', [])
         for cond in conditions:
@@ -46,26 +40,31 @@ class Backtester:
                 name = item.get('type')
                 params = item.get('params', {})
                 length = int(params.get('length', 14))
-                col_name = f"{name}_{length}" # e.g. ema_3
+                col_name = f"{name}_{length}" # Unique name e.g. rsi_14
                 
-                # Calculate manually to support ANY length
-                if name == 'ema':
-                    df[col_name] = df['close'].ewm(span=length, adjust=False).mean()
-                elif name == 'sma':
-                    df[col_name] = df['close'].rolling(window=length).mean()
-                elif name == 'rsi':
-                    # Manual RSI calculation for custom lengths
-                    delta = df['close'].diff()
-                    gain = (delta.where(delta > 0, 0)).rolling(window=length).mean()
-                    loss = (-delta.where(delta < 0, 0)).rolling(window=length).mean()
-                    rs = gain / loss
-                    df[col_name] = 100 - (100 / (1 + rs))
-                elif name == 'close': df[col_name] = df['close']
-                elif name == 'open': df[col_name] = df['open']
-                elif name == 'high': df[col_name] = df['high']
-                elif name == 'low': df[col_name] = df['low']
-                
-                # Add more custom calcs here if needed (BB, MACD, etc)
+                try:
+                    if name == 'rsi':
+                        df[col_name] = RSIIndicator(df['close'], window=length).rsi()
+                    elif name == 'ema':
+                        df[col_name] = EMAIndicator(df['close'], window=length).ema_indicator()
+                    elif name == 'sma':
+                        df[col_name] = SMAIndicator(df['close'], window=length).sma_indicator()
+                    elif name == 'bb_upper':
+                        bb = BollingerBands(df['close'], window=length, window_dev=float(params.get('std', 2.0)))
+                        df[col_name] = bb.bollinger_hband()
+                    elif name == 'bb_lower':
+                        bb = BollingerBands(df['close'], window=length, window_dev=float(params.get('std', 2.0)))
+                        df[col_name] = bb.bollinger_lband()
+                    elif name == 'atr':
+                        atr = AverageTrueRange(df['high'], df['low'], df['close'], window=length)
+                        df[col_name] = atr.average_true_range()
+                    
+                    # RAW DATA MAPPING
+                    elif name in ['close', 'open', 'high', 'low', 'volume']:
+                        df[col_name] = df[name]
+
+                except Exception as e:
+                    print(f"Calc Error for {name}: {e}")
 
         return df.fillna(0)
 
@@ -73,27 +72,21 @@ class Backtester:
         if item['type'] == 'number': return float(item.get('params', {}).get('value', 0))
         if item['type'] in ['close', 'open', 'high', 'low', 'volume']: return row[item['type']]
         
-        # Look for the custom column we made above
         length = int(item.get('params', {}).get('length', 14))
         col = f"{item['type']}_{length}"
         
-        # Fallback to library defaults if custom col missing
-        if col not in row:
-            # Try to map to 'ta' library default names
-            if item['type'] == 'rsi': return row.get('momentum_rsi', 50)
-            if item['type'] == 'adx': return row.get('trend_adx', 0)
-            if item['type'] == 'cci': return row.get('trend_cci', 0)
-            if item['type'] == 'atr': return row.get('volatility_atr', 0)
-            
         return row.get(col, 0)
 
     def run_simulation(self, df, logic):
-        # PREPARE DATA FIRST
+        # Safety check for empty data
+        if df.empty: return {"error": "No Data"}
+
+        # 1. Prepare Indicators
         df = self.prepare_data(df, logic)
         
         balance = 1000.0
-        start_price = df.iloc[0]['close'] if len(df) > 0 else 1
-        buy_hold_qty = 1000.0 / start_price
+        start_price = df.iloc[0]['close']
+        buy_hold_qty = 1000.0 / start_price if start_price > 0 else 0
         
         equity_curve = []
         trades = []
@@ -115,18 +108,19 @@ class Backtester:
                 exit_price = 0
                 reason = ''
                 
-                # Hit SL?
-                if sl_pct > 0 and row['low'] <= position['sl']:
-                    exit_price = position['sl']
-                    # Slippage simulation: If candle opened below SL, we exited at Open
-                    if row['open'] < exit_price: exit_price = row['open']
-                    reason = 'SL'
+                # Check SL
+                if sl_pct > 0:
+                    sl_price = position['entry_price'] * (1 - sl_pct/100)
+                    if row['low'] <= sl_price:
+                        exit_price = sl_price
+                        reason = 'SL'
                 
-                # Hit TP?
-                elif tp_pct > 0 and row['high'] >= position['tp']:
-                    exit_price = position['tp']
-                    if row['open'] > exit_price: exit_price = row['open']
-                    reason = 'TP'
+                # Check TP
+                if tp_pct > 0 and exit_price == 0:
+                    tp_price = position['entry_price'] * (1 + tp_pct/100)
+                    if row['high'] >= tp_price:
+                        exit_price = tp_price
+                        reason = 'TP'
                 
                 if exit_price > 0:
                     gross_pnl = (exit_price - position['entry_price']) * position['qty']
@@ -140,11 +134,9 @@ class Backtester:
             if not position:
                 entry_signal = True
                 for cond in conditions:
-                    # Current Values
                     val_left = self.get_val(row, cond['left'])
                     val_right = self.get_val(row, cond['right'])
                     
-                    # Previous Values (For Crossovers)
                     prev_left = self.get_val(prev_row, cond['left'])
                     prev_right = self.get_val(prev_row, cond['right'])
                     
@@ -154,23 +146,23 @@ class Backtester:
                     if op == 'LESS_THAN' and not (val_left < val_right): entry_signal = False
                     if op == 'EQUALS' and not (val_left == val_right): entry_signal = False
                     
-                    # TRUE CROSSOVER LOGIC
                     if op == 'CROSSES_ABOVE':
-                        # Current: Left > Right  AND  Previous: Left <= Right
+                        # Valid Crossover: Now > Target AND Prev <= Target
                         if not (val_left > val_right and prev_left <= prev_right): entry_signal = False
                     
                     if op == 'CROSSES_BELOW':
-                        # Current: Left < Right  AND  Previous: Left >= Right
                         if not (val_left < val_right and prev_left >= prev_right): entry_signal = False
 
                 if entry_signal:
-                    fee = (current_price * qty) * FEE_RATE
-                    balance -= fee
+                    # Calculate cost
+                    cost = current_price * qty
+                    fee = cost * FEE_RATE
                     
-                    sl_price = current_price * (1 - sl_pct/100)
-                    tp_price = current_price * (1 + tp_pct/100)
-                    position = {'entry_price': current_price, 'qty': qty, 'sl': sl_price, 'tp': tp_price}
-                    trades.append({'time': row['timestamp'], 'type': 'BUY', 'price': current_price, 'pnl': -fee})
+                    # Check if we have enough balance (Virtual)
+                    if balance > fee:
+                        balance -= fee
+                        position = {'entry_price': current_price, 'qty': qty}
+                        trades.append({'time': row['timestamp'], 'type': 'BUY', 'price': current_price, 'pnl': -fee})
 
             equity_curve.append({
                 'time': row['timestamp'].isoformat(), 
@@ -190,8 +182,8 @@ class Backtester:
                 "win_rate": round(win_rate, 1),
                 "total_return_pct": round(total_return, 2)
             },
-            "trades": trades[-50:],
-            "equity": equity_curve[::5]
+            "trades": trades[-50:], # Last 50 trades
+            "equity": equity_curve[::5] # Downsample for chart performance
         }
 
 backtester = Backtester()
