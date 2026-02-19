@@ -3,6 +3,11 @@ import pandas as pd
 import numpy as np
 import traceback
 import ssl
+# IMPORT THE FULL LIBRARY
+from ta.trend import EMAIndicator, SMAIndicator, MACD, ADXIndicator, CCIIndicator, IchimokuIndicator
+from ta.momentum import RSIIndicator, StochasticOscillator, ROCIndicator
+from ta.volatility import BollingerBands, AverageTrueRange
+from ta.volume import MFIIndicator, OnBalanceVolumeIndicator
 
 class Backtester:
     def __init__(self):
@@ -22,7 +27,6 @@ class Backtester:
                 'userAgent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
             })
 
-            # Map Timeframe
             tf_map = {'1m': '1m', '5m': '5m', '15m': '15m', '1h': '1h', '4h': '4h', '1d': '1d'}
             tf = tf_map.get(timeframe, '1h')
 
@@ -41,7 +45,8 @@ class Backtester:
             if exchange: await exchange.close()
 
     def prepare_data(self, df, logic):
-        # Calculate Indicators (RSI, EMA, etc)
+        # DYNAMIC CALCULATION ENGINE
+        # This matches the Live Engine logic perfectly.
         try:
             conditions = logic.get('conditions', [])
             for cond in conditions:
@@ -51,93 +56,74 @@ class Backtester:
                     
                     name = item.get('type')
                     params = item.get('params', {})
+                    # Default length to 14 if not provided
                     length = int(params.get('length') or 14)
-                    col_name = f"{name}_{length}"
+                    col_name = f"{name}_{length}" # Unique ID for column
                     
                     if col_name in df.columns: continue
 
+                    # --- TREND ---
                     if name == 'rsi':
-                        delta = df['close'].diff()
-                        gain = (delta.where(delta > 0, 0)).rolling(window=length).mean()
-                        loss = (-delta.where(delta < 0, 0)).rolling(window=length).mean()
-                        rs = gain / loss
-                        df[col_name] = 100 - (100 / (1 + rs))
+                        df[col_name] = RSIIndicator(df['close'], window=length).rsi()
                     elif name == 'ema':
-                        df[col_name] = df['close'].ewm(span=length, adjust=False).mean()
+                        df[col_name] = EMAIndicator(df['close'], window=length).ema_indicator()
                     elif name == 'sma':
-                        df[col_name] = df['close'].rolling(window=length).mean()
+                        df[col_name] = SMAIndicator(df['close'], window=length).sma_indicator()
+                    elif name == 'macd':
+                        # MACD typically 12, 26
+                        macd = MACD(df['close'], window_slow=26, window_fast=12)
+                        df[col_name] = macd.macd()
+                    elif name == 'adx':
+                        adx = ADXIndicator(df['high'], df['low'], df['close'], window=length)
+                        df[col_name] = adx.adx()
+                    elif name == 'cci':
+                        cci = CCIIndicator(df['high'], df['low'], df['close'], window=length)
+                        df[col_name] = cci.cci()
+                    
+                    # --- VOLATILITY ---
+                    elif name == 'bb_upper':
+                        bb = BollingerBands(df['close'], window=length, window_dev=float(params.get('std', 2.0)))
+                        df[col_name] = bb.bollinger_hband()
+                    elif name == 'bb_lower':
+                        bb = BollingerBands(df['close'], window=length, window_dev=float(params.get('std', 2.0)))
+                        df[col_name] = bb.bollinger_lband()
+                    elif name == 'atr':
+                        atr = AverageTrueRange(df['high'], df['low'], df['close'], window=length)
+                        df[col_name] = atr.average_true_range()
+
+                    # --- MOMENTUM ---
+                    elif name == 'stoch_k':
+                        stoch = StochasticOscillator(df['high'], df['low'], df['close'], window=length, smooth_window=3)
+                        df[col_name] = stoch.stoch()
+                    elif name == 'roc':
+                        roc = ROCIndicator(df['close'], window=length)
+                        df[col_name] = roc.roc()
+
+                    # --- VOLUME ---
+                    elif name == 'mfi':
+                        mfi = MFIIndicator(df['high'], df['low'], df['close'], df['volume'], window=length)
+                        df[col_name] = mfi.money_flow_index()
+                    
             return df.fillna(0)
-        except: return df
+        except Exception as e:
+            print(f"Math Error: {e}")
+            return df
 
     def get_val(self, row, item):
         try:
-            if item.get('type') == 'number': return float(item.get('params', {}).get('value', 0))
-            if item.get('type') in ['close', 'open', 'high', 'low', 'volume']: return row[item.get('type')]
+            if item.get('type') == 'number': 
+                return float(item.get('params', {}).get('value', 0))
+            if item.get('type') in ['close', 'open', 'high', 'low', 'volume']: 
+                return row[item.get('type')]
+            
             length = int(item.get('params', {}).get('length') or 14)
             col = f"{item.get('type')}_{length}"
             return row.get(col, 0)
         except: return 0
 
-    def calculate_audit_stats(self, trades, equity_curve):
-        # 1. win/loss stats
-        if not trades: return {}
-        
-        wins = [t['pnl'] for t in trades if t['pnl'] > 0]
-        losses = [t['pnl'] for t in trades if t['pnl'] <= 0]
-        
-        avg_win = np.mean(wins) if wins else 0
-        avg_loss = np.mean(losses) if losses else 0
-        win_rate = len(wins) / len(trades) * 100
-        profit_factor = (sum(wins) / abs(sum(losses))) if sum(losses) != 0 else 999
-
-        # 2. streaks
-        streaks = []
-        current_streak = 0
-        for t in trades:
-            if t['pnl'] > 0:
-                current_streak = current_streak + 1 if current_streak > 0 else 1
-            else:
-                current_streak = current_streak - 1 if current_streak < 0 else -1
-            streaks.append(current_streak)
-        
-        max_consecutive_wins = max(streaks) if streaks else 0
-        max_consecutive_losses = abs(min(streaks)) if streaks else 0
-
-        # 3. drawdown
-        balances = [e['balance'] for e in equity_curve]
-        peak = balances[0]
-        max_drawdown = 0
-        for b in balances:
-            if b > peak: peak = b
-            dd = (peak - b) / peak * 100
-            if dd > max_drawdown: max_drawdown = dd
-
-        # 4. sharpe (Daily Resample)
-        df_eq = pd.DataFrame(equity_curve)
-        df_eq['time'] = pd.to_datetime(df_eq['time'])
-        df_eq.set_index('time', inplace=True)
-        # Resample to daily to calculate standard sharpe
-        daily_returns = df_eq['balance'].resample('D').last().pct_change().dropna()
-        
-        sharpe = 0
-        if daily_returns.std() != 0:
-            # Annualized Sharpe (assuming 365 days for crypto)
-            sharpe = (daily_returns.mean() / daily_returns.std()) * np.sqrt(365)
-
-        return {
-            "profit_factor": round(profit_factor, 2),
-            "avg_win": round(avg_win, 2),
-            "avg_loss": round(avg_loss, 2),
-            "max_drawdown": round(max_drawdown, 2),
-            "sharpe_ratio": round(sharpe, 2),
-            "max_win_streak": max_consecutive_wins,
-            "max_loss_streak": max_consecutive_losses,
-            "expectancy": round((win_rate/100 * avg_win) + ((1 - win_rate/100) * avg_loss), 2)
-        }
-
     def run_simulation(self, df, logic):
         try:
-            if df.empty: return {"error": "No Market Data"}
+            if df.empty: return {"error": "No Data"}
             df = self.prepare_data(df, logic)
             
             balance = 1000.0
@@ -156,23 +142,29 @@ class Backtester:
 
             for i in range(1, len(df)):
                 row = df.iloc[i]
-                current_price = row['close']
                 prev_row = df.iloc[i-1]
+                current_price = row['close']
                 
                 # --- EXIT ---
                 if position:
                     exit_price = 0
                     reason = ''
-                    if sl_pct > 0 and row['low'] <= position['sl']:
-                        exit_price = position['sl']
-                        reason = 'Stop Loss'
-                    elif tp_pct > 0 and row['high'] >= position['tp']:
-                        exit_price = position['tp']
-                        reason = 'Take Profit'
+                    if sl_pct > 0:
+                        sl_price = position['entry_price'] * (1 - sl_pct/100)
+                        if row['low'] <= sl_price:
+                            exit_price = sl_price
+                            reason = 'SL'
+                    
+                    if tp_pct > 0 and exit_price == 0:
+                        tp_price = position['entry_price'] * (1 + tp_pct/100)
+                        if row['high'] >= tp_price:
+                            exit_price = tp_price
+                            reason = 'TP'
                     
                     if exit_price > 0:
                         pnl = (exit_price - position['entry_price']) * position['qty']
-                        net = pnl - (exit_price * position['qty'] * FEE)
+                        cost = (exit_price * position['qty']) * FEE
+                        net = pnl - cost
                         balance += net
                         closed_trades.append({
                             'entry_time': position['entry_time'], 'exit_time': row['timestamp'],
@@ -193,14 +185,13 @@ class Backtester:
                         
                         if op == 'GREATER_THAN' and not (v_l > v_r): signal = False
                         if op == 'LESS_THAN' and not (v_l < v_r): signal = False
+                        # True Crossover Logic
                         if op == 'CROSSES_ABOVE' and not (v_l > v_r and p_l <= p_r): signal = False
                         if op == 'CROSSES_BELOW' and not (v_l < v_r and p_l >= p_r): signal = False
 
                     if signal:
                         balance -= (current_price * qty * FEE)
-                        sl = current_price * (1 - sl_pct/100)
-                        tp = current_price * (1 + tp_pct/100)
-                        position = {'entry_price': current_price, 'qty': qty, 'sl': sl, 'tp': tp, 'entry_time': row['timestamp']}
+                        position = {'entry_price': current_price, 'qty': qty, 'entry_time': row['timestamp']}
 
                 equity_curve.append({
                     'time': row['timestamp'].isoformat(), 
@@ -212,8 +203,20 @@ class Backtester:
             total = len(closed_trades)
             win_rate = (wins / total * 100) if total > 0 else 0
             
-            # CALCULATE ADVANCED STATS
-            audit = self.calculate_audit_stats(closed_trades, equity_curve)
+            # Audit Calcs
+            wins_pnl = [t['pnl'] for t in closed_trades if t['pnl'] > 0]
+            loss_pnl = [t['pnl'] for t in closed_trades if t['pnl'] <= 0]
+            avg_win = np.mean(wins_pnl) if wins_pnl else 0
+            avg_loss = np.mean(loss_pnl) if loss_pnl else 0
+            
+            # Max Drawdown
+            bals = [e['balance'] for e in equity_curve]
+            peak = bals[0]
+            dd = 0
+            for b in bals:
+                if b > peak: peak = b
+                curr_dd = (peak - b) / peak * 100
+                if curr_dd > dd: dd = curr_dd
 
             return {
                 "metrics": {
@@ -221,7 +224,12 @@ class Backtester:
                     "total_trades": total,
                     "win_rate": round(win_rate, 1),
                     "total_return_pct": round(((balance - 1000)/1000)*100, 2),
-                    "audit": audit # NEW AUDIT SECTION
+                    "audit": {
+                        "max_drawdown": round(dd, 2),
+                        "profit_factor": round(sum(wins_pnl)/abs(sum(loss_pnl)), 2) if sum(loss_pnl) != 0 else 99,
+                        "avg_win": round(avg_win, 2),
+                        "avg_loss": round(avg_loss, 2)
+                    }
                 },
                 "trades": closed_trades[-50:],
                 "equity": equity_curve[::5]
