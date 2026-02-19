@@ -2,7 +2,7 @@
 import { useSession } from "next-auth/react";
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Activity, Plus, Zap, BarChart3, Settings, PlayCircle, Power, Trash2, Terminal, X } from "lucide-react";
+import { Activity, Plus, Zap, BarChart3, Settings, PlayCircle, Power, Trash2, Terminal, X, Edit3 } from "lucide-react";
 import Link from 'next/link';
 
 export default function Dashboard() {
@@ -44,7 +44,6 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-white flex relative font-sans">
-      {/* LOG MODAL */}
       <AnimatePresence>
       {selectedStratId && (
         <motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
@@ -57,9 +56,7 @@ export default function Dashboard() {
                     {logs.length === 0 ? <p className="text-slate-600 italic">Waiting for engine ticks...</p> : logs.map((log: any) => (
                         <div key={log.id} className="border-b border-slate-900/50 pb-2 flex gap-3">
                             <span className="text-slate-600 min-w-[80px]">[{new Date(log.timestamp).toLocaleTimeString()}]</span> 
-                            <span className={log.level === 'ERROR' ? 'text-red-500 font-bold' : log.level === 'SUCCESS' ? 'text-emerald-400 font-bold' : 'text-blue-400 font-bold'}>
-                                {log.level}:
-                            </span>
+                            <span className={log.level === 'ERROR' ? 'text-red-500 font-bold' : log.level === 'SUCCESS' ? 'text-emerald-400 font-bold' : 'text-blue-400 font-bold'}>{log.level}:</span>
                             <span className="text-slate-300">{log.message}</span>
                         </div>
                     ))}
@@ -72,63 +69,30 @@ export default function Dashboard() {
       )}
       </AnimatePresence>
 
-      {/* SIDEBAR */}
       <aside className="w-72 border-r border-slate-800 p-8 hidden md:block">
         <h2 className="text-2xl font-bold bg-gradient-to-r from-cyan-400 to-emerald-400 bg-clip-text text-transparent mb-12">AlgoTrade</h2>
         <nav className="space-y-4">
-          <Link href="/dashboard">
-            <button className="w-full flex items-center gap-4 px-6 py-4 bg-slate-900 text-emerald-400 rounded-full border border-slate-800 shadow-lg hover:shadow-emerald-900/20 transition-all font-medium">
-                <Activity size={22} /> Dashboard
-            </button>
-          </Link>
-          <Link href="/dashboard/settings">
-            <button className="w-full flex items-center gap-4 px-6 py-4 text-slate-400 hover:bg-slate-900 hover:text-white rounded-full transition-all font-medium hover:scale-105">
-                <Settings size={22} /> Broker Keys
-            </button>
-          </Link>
+          <Link href="/dashboard"><button className="w-full flex items-center gap-4 px-6 py-4 bg-slate-900 text-emerald-400 rounded-full border border-slate-800 shadow-lg hover:shadow-emerald-900/20 transition-all font-medium"><Activity size={22} /> Dashboard</button></Link>
+          <Link href="/dashboard/settings"><button className="w-full flex items-center gap-4 px-6 py-4 text-slate-400 hover:bg-slate-900 hover:text-white rounded-full transition-all font-medium hover:scale-105"><Settings size={22} /> Broker Keys</button></Link>
         </nav>
       </aside>
 
-      {/* MAIN CONTENT */}
       <main className="flex-1 p-10">
         <header className="flex justify-between items-center mb-12">
-            <div>
-                <h1 className="text-4xl font-bold mb-2">Command Center</h1>
-                <p className="text-slate-400 text-lg">Welcome back, {session?.user?.name}</p>
-            </div>
-            <Link href="/dashboard/builder">
-                <button className="bg-gradient-to-r from-emerald-600 to-cyan-600 text-white px-8 py-4 rounded-full font-bold flex items-center gap-3 shadow-[0_0_30px_rgba(16,185,129,0.4)] hover:shadow-[0_0_50px_rgba(16,185,129,0.6)] hover:scale-105 transition-all text-lg">
-                    <Plus size={24} /> New Strategy
-                </button>
-            </Link>
+            <div><h1 className="text-4xl font-bold mb-2">Command Center</h1><p className="text-slate-400 text-lg">Welcome back, {session?.user?.name}</p></div>
+            <Link href="/dashboard/builder"><button className="bg-gradient-to-r from-emerald-600 to-cyan-600 text-white px-8 py-4 rounded-full font-bold flex items-center gap-3 shadow-[0_0_30px_rgba(16,185,129,0.4)] hover:shadow-[0_0_50px_rgba(16,185,129,0.6)] hover:scale-105 transition-all text-lg"><Plus size={24} /> New Strategy</button></Link>
         </header>
         
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-12">
-            <div className="p-8 bg-slate-900 rounded-[2rem] border border-slate-800 shadow-xl">
-                <div className="text-slate-400 mb-3 flex items-center gap-3 text-sm font-medium uppercase tracking-wider"><Activity size={18}/> Active Algos</div>
-                <div className="text-5xl font-bold text-white">{strategies.length} <span className="text-lg text-slate-500 font-normal">running</span></div>
-            </div>
-            <div className="p-8 bg-slate-900 rounded-[2rem] border border-slate-800 shadow-xl">
-                <div className="text-slate-400 mb-3 flex items-center gap-3 text-sm font-medium uppercase tracking-wider"><BarChart3 size={18}/> Total Volume</div>
-                <div className="text-5xl font-bold text-white">₹0.00</div>
-            </div>
-            <div className="p-8 bg-slate-900 rounded-[2rem] border border-slate-800 relative overflow-hidden shadow-xl">
-                <div className="absolute right-0 top-0 p-6 opacity-10"><Zap size={80} /></div>
-                <div className="text-slate-400 mb-3 text-sm font-medium uppercase tracking-wider">System Status</div>
-                <div className="text-emerald-400 font-bold flex items-center gap-3 text-xl"><span className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_10px_#10b981]"></span> Online</div>
-            </div>
+            <div className="p-8 bg-slate-900 rounded-[2rem] border border-slate-800 shadow-xl"><div className="text-slate-400 mb-3 flex items-center gap-3 text-sm font-medium uppercase tracking-wider"><Activity size={18}/> Active Algos</div><div className="text-5xl font-bold text-white">{strategies.length} <span className="text-lg text-slate-500 font-normal">running</span></div></div>
+            <div className="p-8 bg-slate-900 rounded-[2rem] border border-slate-800 shadow-xl"><div className="text-slate-400 mb-3 flex items-center gap-3 text-sm font-medium uppercase tracking-wider"><BarChart3 size={18}/> Total Volume</div><div className="text-5xl font-bold text-white">₹0.00</div></div>
+            <div className="p-8 bg-slate-900 rounded-[2rem] border border-slate-800 relative overflow-hidden shadow-xl"><div className="absolute right-0 top-0 p-6 opacity-10"><Zap size={80} /></div><div className="text-slate-400 mb-3 text-sm font-medium uppercase tracking-wider">System Status</div><div className="text-emerald-400 font-bold flex items-center gap-3 text-xl"><span className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_10px_#10b981]"></span> Online</div></div>
         </div>
 
         <h2 className="text-2xl font-bold mb-6">Your Strategies</h2>
         
         {strategies.length === 0 ? (
-          <div className="border-2 border-dashed border-slate-800 rounded-[2rem] p-16 flex flex-col items-center justify-center text-slate-500">
-            <div className="bg-slate-900 p-6 rounded-full mb-6"><PlayCircle size={48} className="text-slate-400" /></div>
-            <p className="text-xl mb-6">No algorithms running yet.</p>
-            <Link href="/dashboard/builder">
-                <button className="text-emerald-400 hover:text-emerald-300 font-bold text-lg hover:underline">+ Create New Algo</button>
-            </Link>
-          </div>
+          <div className="border-2 border-dashed border-slate-800 rounded-[2rem] p-16 flex flex-col items-center justify-center text-slate-500"><div className="bg-slate-900 p-6 rounded-full mb-6"><PlayCircle size={48} className="text-slate-400" /></div><p className="text-xl mb-6">No algorithms running yet.</p><Link href="/dashboard/builder"><button className="text-emerald-400 hover:text-emerald-300 font-bold text-lg hover:underline">+ Create New Algo</button></Link></div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
             {strategies.map((strat: any) => (
@@ -136,18 +100,16 @@ export default function Dashboard() {
                 <div className="flex justify-between items-start mb-6">
                   <div className="p-3 bg-slate-800 rounded-2xl text-cyan-400"><Zap size={24} /></div>
                   <div className="flex gap-3">
+                    <Link href={'/dashboard/builder?edit=' + strat.id}>
+                        <button className="w-10 h-10 flex items-center justify-center rounded-full bg-slate-800 text-slate-400 hover:bg-blue-600 hover:text-white transition-all" title="Edit"><Edit3 size={18} /></button>
+                    </Link>
                     <button onClick={() => fetchLogs(strat.id)} className="w-10 h-10 flex items-center justify-center rounded-full bg-slate-800 text-slate-400 hover:bg-black hover:text-emerald-400 transition-all" title="View Logs"><Terminal size={18} /></button>
                     <button onClick={() => handleDelete(strat.id)} className="w-10 h-10 flex items-center justify-center rounded-full bg-slate-800 text-slate-400 hover:bg-red-900/30 hover:text-red-400 transition-all"><Trash2 size={18} /></button>
                   </div>
                 </div>
                 <h3 className="font-bold text-xl mb-2">{strat.name}</h3>
-                <div className="text-slate-400 text-sm mb-6 flex items-center gap-2">
-                    <span className="bg-slate-800 px-3 py-1 rounded-full text-xs">{strat.symbol}</span>
-                    <span className="bg-slate-800 px-3 py-1 rounded-full text-xs">{strat.broker}</span>
-                </div>
-                <div className="flex items-center gap-3 text-sm font-bold text-emerald-400 bg-emerald-500/10 px-4 py-2 rounded-full w-fit border border-emerald-500/20">
-                   <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> RUNNING
-                </div>
+                <div className="text-slate-400 text-sm mb-6 flex items-center gap-2"><span className="bg-slate-800 px-3 py-1 rounded-full text-xs">{strat.symbol}</span><span className="bg-slate-800 px-3 py-1 rounded-full text-xs">{strat.broker}</span></div>
+                <div className="flex items-center gap-3 text-sm font-bold text-emerald-400 bg-emerald-500/10 px-4 py-2 rounded-full w-fit border border-emerald-500/20"><span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> RUNNING</div>
               </motion.div>
             ))}
           </div>

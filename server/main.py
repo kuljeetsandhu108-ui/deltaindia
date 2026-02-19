@@ -50,6 +50,29 @@ def create_strategy(strat: schemas.StrategyInput, db: Session = Depends(database
     if not new_strat: raise HTTPException(status_code=404, detail="User not found")
     return {"status": "Strategy Deployed", "id": new_strat.id}
 
+# --- NEW ENDPOINTS FOR EDITING ---
+
+@app.get("/strategy/{id}")
+def get_strategy_details(id: int, db: Session = Depends(database.get_db)):
+    strat = db.query(models.Strategy).filter(models.Strategy.id == id).first()
+    if not strat: raise HTTPException(status_code=404, detail="Strategy not found")
+    return strat
+
+@app.put("/strategy/{id}")
+def update_strategy(id: int, strat: schemas.StrategyInput, db: Session = Depends(database.get_db)):
+    db_strat = db.query(models.Strategy).filter(models.Strategy.id == id).first()
+    if not db_strat: raise HTTPException(status_code=404, detail="Strategy not found")
+    
+    # Update Fields
+    db_strat.name = strat.name
+    db_strat.symbol = strat.symbol
+    db_strat.logic_configuration = strat.logic
+    
+    db.commit()
+    return {"status": "Strategy Updated", "id": id}
+
+# ---------------------------------
+
 @app.get("/strategies/{email}")
 def get_user_strategies(email: str, db: Session = Depends(database.get_db)):
     user = crud.get_user_by_email(db, email)
@@ -62,7 +85,6 @@ def delete_strategy(id: int, db: Session = Depends(database.get_db)):
     db.commit()
     return {"status": "Deleted"}
 
-# --- NEW LOGS ENDPOINT ---
 @app.get("/strategies/{id}/logs")
 def get_logs(id: int, db: Session = Depends(database.get_db)):
     return crud.get_strategy_logs(db, id)
