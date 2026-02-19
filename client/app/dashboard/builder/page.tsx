@@ -116,19 +116,18 @@ function BuilderContent() {
             <h3 className="text-lg font-semibold text-emerald-400 flex items-center gap-2"><Settings2 size={18}/> Entry Logic</h3>
             <div className="space-y-4">{conditions.map((c, i) => (<motion.div key={c.id} initial={{opacity:0, y:10}} animate={{opacity:1, y:0}} className="flex flex-col md:flex-row items-center gap-4 bg-slate-900 p-4 rounded-xl border border-slate-800 relative"><div className="text-slate-500 font-bold bg-slate-800 w-10 h-10 rounded-full flex items-center justify-center shrink-0">{i === 0 ? 'IF' : 'AND'}</div><IndicatorSelect data={c.left} onChange={(f: string, v: any) => updateCondition(c.id, 'left', f, v)} onParamChange={(p: string, v: any) => updateParam(c.id, 'left', p, v)} /><select className="bg-slate-950 text-emerald-400 font-bold border border-slate-700 rounded px-3 py-2 outline-none" value={c.operator} onChange={(e) => { const newConds = [...conditions]; newConds.find(x => x.id === c.id)!.operator = e.target.value; setConditions(newConds); }}><option value="CROSSES_ABOVE">Crosses Above</option><option value="CROSSES_BELOW">Crosses Below</option><option value="GREATER_THAN">Greater Than</option><option value="LESS_THAN">Less Than</option></select><IndicatorSelect data={c.right} onChange={(f: string, v: any) => updateCondition(c.id, 'right', f, v)} onParamChange={(p: string, v: any) => updateParam(c.id, 'right', p, v)} /><button onClick={() => setConditions(conditions.filter(x => x.id !== c.id))} className="absolute top-2 right-2 text-slate-600 hover:text-red-400"><Trash2 size={16}/></button></motion.div>))}</div><button onClick={addCondition} className="w-full py-4 border-2 border-dashed border-slate-800 rounded-xl text-slate-600 hover:border-slate-600 flex items-center justify-center gap-2 transition-all"><Plus size={20} /> Add Logic Block</button>
             
-            {/* BACKTEST RESULTS PANEL */}
+            {/* BACKTEST RESULTS - MANUAL SAFE VERSION (NO BACKTICKS) */}
             {backtestResult && (
                 <motion.div initial={{opacity:0, y:20}} animate={{opacity:1, y:0}} className="mt-8 bg-slate-900 rounded-2xl border border-slate-700 p-6">
                     <h3 className="text-xl font-bold mb-6 flex items-center gap-2 text-white"><BarChart2 className="text-blue-400"/> Backtest Results (Last 1000 Candles)</h3>
-                    
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
                         <div className="bg-slate-950 p-4 rounded-xl border border-slate-800">
                             <div className="text-slate-500 text-xs uppercase mb-1">Final Balance</div>
-                            <div className="text-2xl font-bold text-white"></div>
+                            <div className="text-2xl font-bold text-white">${backtestResult.metrics.final_balance}</div>
                         </div>
                         <div className="bg-slate-950 p-4 rounded-xl border border-slate-800">
                             <div className="text-slate-500 text-xs uppercase mb-1">Total Return</div>
-                            <div className={	ext-2xl font-bold }>
+                            <div className={'text-2xl font-bold ' + (backtestResult.metrics.total_return_pct >= 0 ? 'text-emerald-400' : 'text-red-400')}>
                                 {backtestResult.metrics.total_return_pct}%
                             </div>
                         </div>
@@ -141,7 +140,6 @@ function BuilderContent() {
                             <div className="text-2xl font-bold text-white">{backtestResult.metrics.total_trades}</div>
                         </div>
                     </div>
-
                     <div className="h-64 w-full bg-slate-950/50 rounded-xl border border-slate-800 p-2">
                         <ResponsiveContainer width="100%" height="100%">
                             <LineChart data={backtestResult.equity}>
