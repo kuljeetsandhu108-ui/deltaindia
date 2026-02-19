@@ -7,7 +7,6 @@ import { useSession } from 'next-auth/react';
 import { INDICATORS } from '@/lib/indicators';
 import { useSearchParams, useRouter } from 'next/navigation';
 
-// 1. WE MOVED THE LOGIC INTO THIS INNER COMPONENT
 function BuilderContent() {
   const { data: session } = useSession();
   const searchParams = useSearchParams();
@@ -21,13 +20,15 @@ function BuilderContent() {
   const [stopLoss, setStopLoss] = useState(1.0);
   const [takeProfit, setTakeProfit] = useState(2.0);
   
-  const [conditions, setConditions] = useState([
-    { id: 1, 
+  // DEFAULT STRUCTURE
+  const defaultCondition = { 
+      id: 1, 
       left: { type: 'rsi', params: { length: 14 } }, 
       operator: 'CROSSES_ABOVE', 
       right: { type: 'number', params: { value: 30 } } 
-    }
-  ]);
+  };
+
+  const [conditions, setConditions] = useState([defaultCondition]);
 
   useEffect(() => {
     if (editId && session?.user?.email) {
@@ -39,11 +40,24 @@ function BuilderContent() {
                     const data = await res.json();
                     setStrategyName(data.name);
                     setSymbol(data.symbol);
-                    const logic = data.logic_configuration;
+                    
+                    const logic = data.logic_configuration || {};
                     setQuantity(logic.quantity || 1);
                     setStopLoss(logic.sl || 0);
                     setTakeProfit(logic.tp || 0);
-                    setConditions(logic.conditions || []);
+                    
+                    // SAFETY CHECK: Ensure conditions have correct structure
+                    // If old data is missing 'left' or 'right', replace with default
+                    const safeConditions = (logic.conditions || []).map((c: any) => ({
+                        id: c.id || Math.random(),
+                        left: c.left || { type: 'close', params: {} },
+                        operator: c.operator || 'GREATER_THAN',
+                        right: c.right || { type: 'number', params: { value: 0 } }
+                    }));
+
+                    if (safeConditions.length > 0) {
+                        setConditions(safeConditions);
+                    }
                 }
             } catch (e) { console.error(e); }
         };
@@ -114,7 +128,11 @@ function BuilderContent() {
   };
 
   const IndicatorSelect = ({ side, data, onChange, onParamChange }: any) => {
+    // CRASH PROTECTION: If data is missing (old strategy), render a placeholder
+    if (!data || !data.type) return <div className="text-red-500 text-xs p-2">Invalid Data (Reset Recommended)</div>;
+
     const selectedDef = INDICATORS.find(i => i.value === data.type);
+    
     return (
         <div className="flex flex-col gap-2 bg-slate-950 p-3 rounded-lg border border-slate-700 min-w-[250px]">
             <div className="relative">
@@ -142,8 +160,6 @@ function BuilderContent() {
         <div className="col-span-1 space-y-6">
           <div className="bg-slate-900 p-6 rounded-xl border border-slate-800"><h3 className="text-lg font-semibold mb-4 text-cyan-400 flex items-center gap-2"><Zap size={18} /> Asset</h3><div className="space-y-4"><div><label className="block text-sm text-slate-400 mb-1">Name</label><input type="text" value={strategyName} onChange={(e) => setStrategyName(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded p-2" /></div><div><label className="block text-sm text-slate-400 mb-1">Pair</label><select value={symbol} onChange={(e) => setSymbol(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded p-2"><option value="BTCUSD">BTC/USD</option><option value="ETHUSD">ETH/USD</option></select></div></div></div>
           <div className="bg-slate-900 p-6 rounded-xl border border-slate-800"><h3 className="text-lg font-semibold mb-4 text-orange-400 flex items-center gap-2"><AlertTriangle size={18} /> Risk</h3><div className="space-y-4"><div><label className="block text-sm text-slate-400 mb-1">Qty</label><input type="number" value={quantity} onChange={(e) => setQuantity(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-700 rounded p-2" /></div><div className="grid grid-cols-2 gap-4"><div><label className="block text-sm text-red-400 mb-1">SL %</label><input type="number" step="0.1" value={stopLoss} onChange={(e) => setStopLoss(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-700 rounded p-2" /></div><div><label className="block text-sm text-emerald-400 mb-1">TP %</label><input type="number" step="0.1" value={takeProfit} onChange={(e) => setTakeProfit(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-700 rounded p-2" /></div></div></div></div>
-          
-          {/* DEPLOY BUTTON MOVED HERE FOR MOBILE LAYOUT */}
           <button onClick={handleDeploy} className="w-full py-4 bg-gradient-to-r from-emerald-600 to-cyan-600 rounded-lg font-bold flex items-center justify-center gap-2 hover:scale-105 transition-transform">
             {editId ? <Save size={18} /> : <Play size={18} />} {editId ? 'Update Strategy' : 'Deploy Live'}
           </button>
@@ -154,16 +170,12 @@ function BuilderContent() {
   );
 }
 
-// 2. MAIN COMPONENT (THE FIX)
-// We wrap the Logic in Suspense so Next.js doesn't crash during build
 export default function StrategyBuilder() {
   return (
     <div className="min-h-screen bg-slate-950 text-white p-6">
       <header className="flex justify-between items-center mb-8 border-b border-slate-800 pb-6">
         <div className="flex items-center gap-4"><Link href="/dashboard" className="p-2 hover:bg-slate-900 rounded-lg transition-colors"><ArrowLeft size={24} className="text-slate-400" /></Link><div><h1 className="text-2xl font-bold flex items-center gap-2">Logic Builder</h1></div></div>
       </header>
-      
-      {/* THE MAGIC WRAPPER */}
       <Suspense fallback={<div className="text-slate-500">Loading Builder...</div>}>
         <BuilderContent />
       </Suspense>
