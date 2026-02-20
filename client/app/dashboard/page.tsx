@@ -106,33 +106,26 @@ export default function Dashboard() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
             {strategies.map((strat: any) => (
-              <motion.div initial={{opacity:0, y:20}} animate={{opacity:1, y:0}} key={strat.id} className={p-8 rounded-[2rem] border transition-all group relative hover:shadow-2xl hover:shadow-black/50 }>
+              <motion.div initial={{opacity:0, y:20}} animate={{opacity:1, y:0}} key={strat.id} className={'p-8 rounded-[2rem] border transition-all group relative hover:shadow-2xl hover:shadow-black/50 ' + (strat.is_running ? 'bg-slate-900 border-slate-800 hover:border-emerald-500/30' : 'bg-slate-900/50 border-slate-800 opacity-75')}>
                 <div className="flex justify-between items-start mb-6">
-                  {/* PLAY / PAUSE BUTTON */}
                   <div className="flex gap-2">
-                    <button onClick={() => handleToggle(strat.id)} className={w-12 h-12 flex items-center justify-center rounded-full transition-all shadow-lg hover:scale-105 }>
+                    {/* PLAY PAUSE BUTTON */}
+                    <button onClick={() => handleToggle(strat.id)} className={'w-12 h-12 flex items-center justify-center rounded-full transition-all shadow-lg hover:scale-105 ' + (strat.is_running ? 'bg-yellow-500/10 text-yellow-500 hover:bg-yellow-500 hover:text-black' : 'bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500 hover:text-white')}>
                         {strat.is_running ? <PauseCircle size={24} /> : <Play size={24} className="ml-1" />}
                     </button>
                   </div>
-
                   <div className="flex gap-2">
                     <Link href={'/dashboard/builder?edit=' + strat.id}><button className="w-10 h-10 flex items-center justify-center rounded-full bg-slate-800 text-slate-400 hover:bg-blue-600 hover:text-white transition-all" title="Edit"><Edit3 size={16} /></button></Link>
                     <button onClick={() => fetchLogs(strat.id)} className="w-10 h-10 flex items-center justify-center rounded-full bg-slate-800 text-slate-400 hover:bg-black hover:text-emerald-400 transition-all" title="View Logs"><Terminal size={16} /></button>
                     <button onClick={() => handleDelete(strat.id)} className="w-10 h-10 flex items-center justify-center rounded-full bg-slate-800 text-slate-400 hover:bg-red-900/30 hover:text-red-400 transition-all"><Trash2 size={16} /></button>
                   </div>
                 </div>
-                
                 <h3 className="font-bold text-xl mb-2">{strat.name}</h3>
                 <div className="text-slate-400 text-sm mb-6 flex items-center gap-2"><span className="bg-slate-800 px-3 py-1 rounded-full text-xs">{strat.symbol}</span><span className="bg-slate-800 px-3 py-1 rounded-full text-xs">{strat.broker}</span></div>
-                
                 {strat.is_running ? (
-                    <div className="flex items-center gap-3 text-sm font-bold text-emerald-400 bg-emerald-500/10 px-4 py-2 rounded-full w-fit border border-emerald-500/20">
-                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> RUNNING
-                    </div>
+                    <div className="flex items-center gap-3 text-sm font-bold text-emerald-400 bg-emerald-500/10 px-4 py-2 rounded-full w-fit border border-emerald-500/20"><span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> RUNNING</div>
                 ) : (
-                    <div className="flex items-center gap-3 text-sm font-bold text-yellow-500 bg-yellow-500/10 px-4 py-2 rounded-full w-fit border border-yellow-500/20">
-                        <span className="w-2 h-2 rounded-full bg-yellow-500"></span> PAUSED
-                    </div>
+                    <div className="flex items-center gap-3 text-sm font-bold text-yellow-500 bg-yellow-500/10 px-4 py-2 rounded-full w-fit border border-yellow-500/20"><span className="w-2 h-2 rounded-full bg-yellow-500"></span> PAUSED</div>
                 )}
               </motion.div>
             ))}
