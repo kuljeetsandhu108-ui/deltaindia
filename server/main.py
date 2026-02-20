@@ -6,9 +6,35 @@ from contextlib import asynccontextmanager
 from app import models, database, schemas, crud
 from app.engine import engine as trading_engine
 from app.backtester import backtester
+import ccxt.async_support as ccxt
+
+# GLOBAL CACHE
+symbol_cache = ["BTC-USDT", "ETH-USDT", "XRP-USDT", "SOL-USDT"] # Default fallbacks
+
+async def refresh_symbols():
+    global symbol_cache
+    try:
+        # Connect to Delta India to get real symbols
+        exchange = ccxt.delta({
+            'options': { 'defaultType': 'future' },
+            'urls': { 
+                'api': {'public': 'https://api.india.delta.exchange', 'private': 'https://api.india.delta.exchange'},
+                'www': 'https://india.delta.exchange'
+            }
+        })
+        markets = await exchange.load_markets()
+        # Get all Futures ending in USDT
+        symbols = [s for s in markets.keys() if ('USDT' in s or 'USD' in s) and ':' not in s]
+        if symbols:
+            symbol_cache = sorted(list(set(symbols)))
+            print(f"✅ Loaded {len(symbol_cache)} Symbols from Delta India")
+        await exchange.close()
+    except Exception as e:
+        print(f"⚠️ Symbol Fetch Warning: {e}")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    asyncio.create_task(refresh_symbols())
     asyncio.create_task(trading_engine.start())
     yield
     trading_engine.is_running = False
@@ -25,7 +51,12 @@ app.add_middleware(
 )
 
 @app.get("/")
-def home(): return {"status": "System Online", "engine": "Running"}
+def home(): return {"status": "System Online", "symbols_loaded": len(symbol_cache)}
+
+# --- CRITICAL MISSING ENDPOINT ---
+@app.get("/data/symbols")
+def get_symbols():
+    return symbol_cache
 
 @app.post("/auth/sync")
 def sync_user(user: schemas.UserCreate, db: Session = Depends(database.get_db)):
@@ -41,14 +72,14 @@ def save_keys(keys: schemas.BrokerKeys, db: Session = Depends(database.get_db)):
              new_user = schemas.UserCreate(email=keys.email, full_name="Trader", picture="")
              crud.create_user(db, new_user)
              crud.update_broker_keys(db, keys)
-        except: raise HTTPException(status_code=404, detail="User syncing error.")
-    return {"status": "Keys Encrypted & Saved"}
+        except: raise HTTPException(status_code=404, detail="Sync error.")
+    return {"status": "Keys Saved"}
 
 @app.post("/strategy/create")
 def create_strategy(strat: schemas.StrategyInput, db: Session = Depends(database.get_db)):
     new_strat = crud.create_strategy(db, strat)
     if not new_strat: raise HTTPException(status_code=404, detail="User not found")
-    return {"status": "Strategy Deployed", "id": new_strat.id}
+    return {"status": "Deployed", "id": new_strat.id}
 
 @app.get("/strategies/{email}")
 def get_user_strategies(email: str, db: Session = Depends(database.get_db)):
@@ -69,28 +100,27 @@ def get_logs(id: int, db: Session = Depends(database.get_db)):
 @app.get("/strategy/{id}")
 def get_strategy_details(id: int, db: Session = Depends(database.get_db)):
     strat = db.query(models.Strategy).filter(models.Strategy.id == id).first()
-    if not strat: raise HTTPException(status_code=404, detail="Strategy not found")
+    if not strat: raise HTTPException(status_code=404, detail="Not found")
     return strat
 
 @app.put("/strategy/{id}")
 def update_strategy(id: int, strat: schemas.StrategyInput, db: Session = Depends(database.get_db)):
     db_strat = db.query(models.Strategy).filter(models.Strategy.id == id).first()
-    if not db_strat: raise HTTPException(status_code=404, detail="Strategy not found")
+    if not db_strat: raise HTTPException(status_code=404, detail="Not found")
     db_strat.name = strat.name
     db_strat.symbol = strat.symbol
     db_strat.logic_configuration = strat.logic
     db.commit()
-    return {"status": "Strategy Updated", "id": id}
+    return {"status": "Updated", "id": id}
 
 @app.post("/strategy/backtest")
 async def run_backtest(strat: schemas.StrategyInput):
     timeframe = strat.logic.get('timeframe', '1h')
     
-    # FIXED: Call the correct function name 'fetch_historical_data'
-    # We ask for 3000 candles for deep backtesting
+    # Use fetch_historical_data (matching the class method name)
     df = await backtester.fetch_historical_data(strat.symbol, timeframe, limit=3000)
     
-    if df.empty: return {"error": f"Could not fetch data for {strat.symbol}"}
+    if df.empty: return {"error": f"Could not fetch data for {strat.symbol}. Try a different pair."}
 
     results = backtester.run_simulation(df, strat.logic)
     return results
