@@ -6,67 +6,55 @@ from contextlib import asynccontextmanager
 from app import models, database, schemas, crud
 from app.engine import engine as trading_engine
 from app.backtester import backtester
+from app.brokers.coindcx import coindcx_manager # Import New Manager
 import ccxt.async_support as ccxt
 
-# --- GLOBAL SYMBOL CACHE ---
-DEFAULT_SYMBOLS = ["BTC-USDT", "ETH-USDT", "XRP-USDT", "SOL-USDT"]
-symbol_cache = DEFAULT_SYMBOLS
+# --- DUAL CACHE ---
+symbol_cache = {
+    "DELTA": ["BTCUSD", "ETHUSD"],
+    "COINDCX": ["BTC/USDT", "ETH/USDT"]
+}
 
-async def refresh_symbols():
+async def refresh_symbols_delta():
     global symbol_cache
-    exchange = None
     try:
-        print("... Fetching Live Symbols from Delta India ...")
-        exchange = ccxt.delta({
-            'options': { 'defaultType': 'future' },
-            'urls': { 
-                'api': {'public': 'https://api.india.delta.exchange', 'private': 'https://api.india.delta.exchange'},
-                'www': 'https://india.delta.exchange'
-            }
-        })
+        exchange = ccxt.delta({'options': {'defaultType': 'future'}, 'urls': {'api': {'public': 'https://api.india.delta.exchange', 'private': 'https://api.india.delta.exchange'}, 'www': 'https://india.delta.exchange'}})
         markets = await exchange.load_markets()
-        
-        live_symbols = []
-        for symbol, market in markets.items():
-            if market.get('active'):
-                m_id = market.get('id', symbol)
-                if 'USDT' in m_id or 'USD' in m_id:
-                    live_symbols.append(m_id)
-        
-        if len(live_symbols) > 0:
-            symbol_cache = sorted(list(set(live_symbols)))
-            print(f"✅ Loaded {len(symbol_cache)} Live Pairs")
-        else:
-            print("⚠️ API returned 0 symbols. Keeping defaults.")
+        syms = [m['id'] for k, m in markets.items() if m.get('active') and ('USDT' in m.get('id') or 'USD' in m.get('id'))]
+        if syms: symbol_cache["DELTA"] = sorted(list(set(syms)))
+        await exchange.close()
+    except: pass
 
-    except Exception as e:
-        print(f"⚠️ Symbol Fetch Warning: {e}")
-    finally:
-        if exchange: await exchange.close()
+async def refresh_symbols_coindcx():
+    global symbol_cache
+    syms = await coindcx_manager.fetch_symbols()
+    if syms: symbol_cache["COINDCX"] = syms
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup tasks
-    asyncio.create_task(refresh_symbols())
+    # Fetch both on startup
+    await refresh_symbols_delta()
+    await refresh_symbols_coindcx()
     asyncio.create_task(trading_engine.start())
     yield
-    # Shutdown tasks
     trading_engine.is_running = False
 
 models.Base.metadata.create_all(bind=database.engine)
 app = FastAPI(title="AlgoTradeIndia Engine", lifespan=lifespan)
-
-app.add_middleware(
-    CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
-)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 @app.get("/")
-def home(): return {"status": "System Online", "symbols": len(symbol_cache)}
+def home(): return {"status": "Online"}
 
+# --- SMART ROUTER ---
 @app.get("/data/symbols")
-async def get_symbols():
-    if len(symbol_cache) <= 4: await refresh_symbols()
-    return symbol_cache
+async def get_symbols(broker: str = "DELTA"):
+    broker = broker.upper()
+    # Lazy load if empty
+    if len(symbol_cache.get(broker, [])) <= 4:
+        if broker == "DELTA": await refresh_symbols_delta()
+        elif broker == "COINDCX": await refresh_symbols_coindcx()
+    return symbol_cache.get(broker, [])
 
 @app.post("/auth/sync")
 def sync_user(user: schemas.UserCreate, db: Session = Depends(database.get_db)):
@@ -76,39 +64,26 @@ def sync_user(user: schemas.UserCreate, db: Session = Depends(database.get_db)):
 
 @app.post("/user/keys")
 def save_keys(keys: schemas.BrokerKeys, db: Session = Depends(database.get_db)):
-    updated_user = crud.update_broker_keys(db, keys)
-    if not updated_user:
-        try:
-             new_user = schemas.UserCreate(email=keys.email, full_name="Trader", picture="")
-             crud.create_user(db, new_user)
-             crud.update_broker_keys(db, keys)
-        except: raise HTTPException(status_code=404, detail="Sync error.")
+    # Handles both brokers dynamically based on input
+    crud.update_broker_keys(db, keys)
     return {"status": "Keys Saved"}
 
 @app.post("/strategy/create")
 def create_strategy(strat: schemas.StrategyInput, db: Session = Depends(database.get_db)):
     new_strat = crud.create_strategy(db, strat)
-    if not new_strat: raise HTTPException(status_code=404, detail="User not found")
     return {"status": "Deployed", "id": new_strat.id}
 
 @app.get("/strategies/{email}")
 def get_user_strategies(email: str, db: Session = Depends(database.get_db)):
     user = crud.get_user_by_email(db, email)
-    if not user: return []
-    return user.strategies
+    return user.strategies if user else []
 
-# --- THE MISSING TOGGLE ENDPOINT (RESTORED) ---
 @app.post("/strategies/{id}/toggle")
 def toggle_strategy(id: int, db: Session = Depends(database.get_db)):
     strat = db.query(models.Strategy).filter(models.Strategy.id == id).first()
-    if not strat: raise HTTPException(status_code=404, detail="Not Found")
-    
     strat.is_running = not strat.is_running
     db.commit()
-    
-    status = "RUNNING" if strat.is_running else "PAUSED"
-    return {"status": status, "is_running": strat.is_running}
-# ----------------------------------------------
+    return {"status": "OK", "is_running": strat.is_running}
 
 @app.delete("/strategies/{id}")
 def delete_strategy(id: int, db: Session = Depends(database.get_db)):
@@ -122,16 +97,14 @@ def get_logs(id: int, db: Session = Depends(database.get_db)):
 
 @app.get("/strategy/{id}")
 def get_strategy_details(id: int, db: Session = Depends(database.get_db)):
-    strat = db.query(models.Strategy).filter(models.Strategy.id == id).first()
-    if not strat: raise HTTPException(status_code=404, detail="Not found")
-    return strat
+    return db.query(models.Strategy).filter(models.Strategy.id == id).first()
 
 @app.put("/strategy/{id}")
 def update_strategy(id: int, strat: schemas.StrategyInput, db: Session = Depends(database.get_db)):
     db_strat = db.query(models.Strategy).filter(models.Strategy.id == id).first()
-    if not db_strat: raise HTTPException(status_code=404, detail="Not found")
     db_strat.name = strat.name
     db_strat.symbol = strat.symbol
+    db_strat.broker = strat.broker # Update broker too
     db_strat.logic_configuration = strat.logic
     db.commit()
     return {"status": "Updated", "id": id}
@@ -139,7 +112,14 @@ def update_strategy(id: int, strat: schemas.StrategyInput, db: Session = Depends
 @app.post("/strategy/backtest")
 async def run_backtest(strat: schemas.StrategyInput):
     timeframe = strat.logic.get('timeframe', '1h')
-    df = await backtester.fetch_historical_data(strat.symbol, timeframe, limit=3000)
-    if df.empty: return {"error": f"Could not fetch data for {strat.symbol}"}
+    
+    # ROUTE TO CORRECT DATA SOURCE
+    if strat.broker == "COINDCX":
+        df = await coindcx_manager.fetch_history(strat.symbol, timeframe, limit=3000)
+    else:
+        df = await backtester.fetch_historical_data(strat.symbol, timeframe, limit=3000)
+    
+    if df.empty: return {"error": f"No data for {strat.symbol} on {strat.broker}"}
+
     results = backtester.run_simulation(df, strat.logic)
     return results
