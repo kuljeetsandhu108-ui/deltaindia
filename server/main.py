@@ -12,44 +12,63 @@ import ccxt.async_support as ccxt
 DEFAULT_SYMBOLS = ["BTC-USDT", "ETH-USDT", "XRP-USDT", "SOL-USDT"]
 symbol_cache = DEFAULT_SYMBOLS
 
-async def refresh_symbols():
-    global symbol_cache
+async def fetch_delta_pairs():
+    """ The logic from get_pairs.py adapted for Async """
+    print("... Connecting to Delta Exchange India ...")
     exchange = None
     try:
-        print("... Fetching Live Symbols from Delta India ...")
         exchange = ccxt.delta({
-            'options': { 'defaultType': 'future' },
-            'urls': { 
-                'api': {'public': 'https://api.india.delta.exchange', 'private': 'https://api.india.delta.exchange'},
-                'www': 'https://india.delta.exchange'
+            'options': {'defaultType': 'future'},
+            'urls': {
+                'api': {
+                    'public': 'https://api.india.delta.exchange',
+                    'private': 'https://api.india.delta.exchange',
+                },
+                'www': 'https://india.delta.exchange',
             }
         })
+        
         markets = await exchange.load_markets()
         
-        # Get all USDT futures
-        live_symbols = []
+        valid_pairs = []
         for symbol, market in markets.items():
-            if market.get('active'):
-                # Prefer ID (BTC-USDT) over Symbol (BTC/USDT:USDT)
-                m_id = market.get('id', symbol)
-                if 'USDT' in m_id:
-                    live_symbols.append(m_id)
+            # EXACT LOGIC FROM YOUR WORKING SCRIPT
+            if market.get('active') and 'USDT' in symbol:
+                # We prefer the ID (e.g. BTC-USDT) for trading
+                pair_id = market.get('id', symbol)
+                valid_pairs.append(pair_id)
         
-        if len(live_symbols) > 5:
-            symbol_cache = sorted(list(set(live_symbols)))
-            print(f"✅ Loaded {len(symbol_cache)} Live Pairs")
+        # Remove duplicates and sort
+        final_list = sorted(list(set(valid_pairs)))
+        
+        if len(final_list) > 5:
+            global symbol_cache
+            symbol_cache = final_list
+            print(f"✅ SUCCESS! Loaded {len(symbol_cache)} Pairs from Delta India.")
+            return True
         else:
-            print("⚠️ API returned few symbols. Keeping defaults.")
+            print(f"⚠️ Warning: Only found {len(final_list)} pairs. Keeping defaults.")
+            return False
 
     except Exception as e:
-        print(f"⚠️ Symbol Fetch Failed: {e}")
+        print(f"❌ Error fetching pairs: {e}")
+        return False
     finally:
         if exchange: await exchange.close()
 
+async def startup_retry_loop():
+    """ Tries to fetch symbols 5 times on startup """
+    for i in range(5):
+        print(f"🔄 Symbol Fetch Attempt {i+1}/5...")
+        success = await fetch_delta_pairs()
+        if success:
+            break
+        await asyncio.sleep(5) # Wait 5 seconds before retrying
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Try once on startup
-    asyncio.create_task(refresh_symbols())
+    # Start the retry loop in background
+    asyncio.create_task(startup_retry_loop())
     asyncio.create_task(trading_engine.start())
     yield
     trading_engine.is_running = False
@@ -62,15 +81,18 @@ app.add_middleware(
 )
 
 @app.get("/")
-def home(): return {"status": "System Online", "symbols": len(symbol_cache)}
+def home(): return {"status": "System Online", "symbols_loaded": len(symbol_cache)}
 
-# --- SMART ENDPOINT: Refresh if list is short ---
+# --- GET SYMBOLS ---
 @app.get("/data/symbols")
-async def get_symbols():
-    # If we only have the default few symbols, try to fetch again
-    if len(symbol_cache) <= len(DEFAULT_SYMBOLS):
-        await refresh_symbols()
+def get_symbols():
     return symbol_cache
+
+# --- FORCE REFRESH ENDPOINT ---
+@app.post("/data/refresh")
+async def force_refresh():
+    await fetch_delta_pairs()
+    return {"count": len(symbol_cache), "symbols": symbol_cache}
 
 @app.post("/auth/sync")
 def sync_user(user: schemas.UserCreate, db: Session = Depends(database.get_db)):
@@ -131,6 +153,6 @@ def update_strategy(id: int, strat: schemas.StrategyInput, db: Session = Depends
 async def run_backtest(strat: schemas.StrategyInput):
     timeframe = strat.logic.get('timeframe', '1h')
     df = await backtester.fetch_historical_data(strat.symbol, timeframe, limit=3000)
-    if df.empty: return {"error": f"No data for {strat.symbol}"}
+    if df.empty: return {"error": f"Could not fetch data for {strat.symbol}. Try a different pair."}
     results = backtester.run_simulation(df, strat.logic)
     return results
