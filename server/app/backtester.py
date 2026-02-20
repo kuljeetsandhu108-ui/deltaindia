@@ -5,14 +5,15 @@ import traceback
 import ssl
 import math
 
+# NO EXTERNAL TA LIBRARIES IMPORTED HERE
+# PURE PYTHON/PANDAS ONLY
+
 class Backtester:
     def __init__(self):
-        # Ignore SSL errors for Docker
         self.ssl_context = ssl.create_default_context()
         self.ssl_context.check_hostname = False
         self.ssl_context.verify_mode = ssl.CERT_NONE
 
-    # --- SAFETY HELPER: Converts NaNs to 0 ---
     def sanitize(self, data):
         if isinstance(data, float):
             if math.isnan(data) or math.isinf(data): return 0.0
@@ -26,18 +27,18 @@ class Backtester:
     async def fetch_historical_data(self, symbol, timeframe='1h', limit=1000):
         exchange = None
         try:
-            # Map user timeframe to exchange timeframe
+            # Map timeframe
             tf_map = {'1m': '1m', '5m': '5m', '15m': '15m', '1h': '1h', '4h': '4h', '1d': '1d'}
             tf = tf_map.get(timeframe, '1h')
             
             # Fetch deeper history for small timeframes
-            if tf == '1m': limit = 3000
+            if tf == '1m': limit = 2000
             
             exchange = ccxt.delta({
                 'options': {'defaultType': 'future'},
                 'timeout': 30000,
                 'enableRateLimit': True,
-                'userAgent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+                'userAgent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
             })
 
             ohlcv = await exchange.fetch_ohlcv(symbol, tf, limit=limit)
@@ -47,11 +48,10 @@ class Backtester:
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
             
-            # Ensure proper numeric types
             cols = ['open', 'high', 'low', 'close', 'volume']
             df[cols] = df[cols].apply(pd.to_numeric, errors='coerce')
             
-            return df.dropna() # Drop any bad rows immediately
+            return df.dropna()
         except Exception as e:
             print(f"Fetch Error: {e}")
             return pd.DataFrame()
@@ -59,7 +59,7 @@ class Backtester:
             if exchange: await exchange.close()
 
     def prepare_data(self, df, logic):
-        # Safe Pure Pandas Indicators
+        # MANUAL MATH ENGINE (Zero Dependencies)
         try:
             conditions = logic.get('conditions', [])
             for cond in conditions:
@@ -69,24 +69,46 @@ class Backtester:
                     
                     name = item.get('type')
                     params = item.get('params', {})
-                    length = int(params.get('length') or 14)
+                    # Ensure length is a valid integer, default to 14
+                    try:
+                        length = int(params.get('length') or 14)
+                    except:
+                        length = 14
+                        
                     col_name = f"{name}_{length}"
                     
                     if col_name in df.columns: continue
 
+                    # --- PURE PANDAS IMPLEMENTATIONS ---
                     if name == 'rsi':
                         delta = df['close'].diff()
                         gain = (delta.where(delta > 0, 0)).rolling(window=length).mean()
                         loss = (-delta.where(delta < 0, 0)).rolling(window=length).mean()
                         rs = gain / loss
                         df[col_name] = 100 - (100 / (1 + rs))
+                    
                     elif name == 'ema':
                         df[col_name] = df['close'].ewm(span=length, adjust=False).mean()
+                    
                     elif name == 'sma':
                         df[col_name] = df['close'].rolling(window=length).mean()
-            
+                        
+                    elif name == 'bb_upper':
+                        std_dev = float(params.get('std') or 2.0)
+                        sma = df['close'].rolling(window=length).mean()
+                        std = df['close'].rolling(window=length).std()
+                        df[col_name] = sma + (std * std_dev)
+                        
+                    elif name == 'bb_lower':
+                        std_dev = float(params.get('std') or 2.0)
+                        sma = df['close'].rolling(window=length).mean()
+                        std = df['close'].rolling(window=length).std()
+                        df[col_name] = sma - (std * std_dev)
+
             return df.fillna(0)
-        except: return df
+        except Exception as e:
+            print(f"Math Calculation Error: {e}")
+            return df
 
     def get_val(self, row, item):
         try:
@@ -95,7 +117,9 @@ class Backtester:
             if item.get('type') in ['close', 'open', 'high', 'low', 'volume']: 
                 return float(row[item.get('type')])
             
-            length = int(item.get('params', {}).get('length') or 14)
+            try: length = int(item.get('params', {}).get('length') or 14)
+            except: length = 14
+            
             col = f"{item.get('type')}_{length}"
             return float(row.get(col, 0))
         except: return 0.0
@@ -124,7 +148,7 @@ class Backtester:
                 prev_row = df.iloc[i-1]
                 current_price = float(row['close'])
                 
-                # --- EXIT ---
+                # EXIT
                 if position:
                     exit_price = 0.0
                     reason = ''
@@ -160,7 +184,7 @@ class Backtester:
                         })
                         position = None
 
-                # --- ENTRY ---
+                # ENTRY
                 if not position:
                     signal = True
                     for cond in conditions:
@@ -188,12 +212,10 @@ class Backtester:
                     'buy_hold': float(buy_hold_qty * current_price)
                 })
 
-            # Calc Stats
             wins = len([t for t in closed_trades if t['pnl'] > 0])
             total = len(closed_trades)
             win_rate = (wins / total * 100) if total > 0 else 0
             
-            # --- FINAL OUTPUT SANITIZATION ---
             result = {
                 "metrics": {
                     "final_balance": round(balance, 2),
@@ -207,8 +229,6 @@ class Backtester:
                 "trades": closed_trades[-50:],
                 "equity": equity_curve[::5]
             }
-            
-            # Sanitize ensures NO NaN ever reaches the Frontend
             return self.sanitize(result)
 
         except Exception as e:
