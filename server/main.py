@@ -19,7 +19,7 @@ app = FastAPI(title="AlgoTradeIndia Engine", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 @app.get("/")
-def home(): return {"status": "System Online", "engine": "Running"}
+def home(): return {"status": "System Online"}
 
 @app.post("/auth/sync")
 def sync_user(user: schemas.UserCreate, db: Session = Depends(database.get_db)):
@@ -35,14 +35,14 @@ def save_keys(keys: schemas.BrokerKeys, db: Session = Depends(database.get_db)):
              new_user = schemas.UserCreate(email=keys.email, full_name="Trader", picture="")
              crud.create_user(db, new_user)
              crud.update_broker_keys(db, keys)
-        except: raise HTTPException(status_code=404, detail="User syncing error.")
-    return {"status": "Keys Encrypted & Saved"}
+        except: raise HTTPException(status_code=404, detail="Sync error.")
+    return {"status": "Keys Saved"}
 
 @app.post("/strategy/create")
 def create_strategy(strat: schemas.StrategyInput, db: Session = Depends(database.get_db)):
     new_strat = crud.create_strategy(db, strat)
     if not new_strat: raise HTTPException(status_code=404, detail="User not found")
-    return {"status": "Strategy Deployed", "id": new_strat.id}
+    return {"status": "Deployed", "id": new_strat.id}
 
 @app.get("/strategies/{email}")
 def get_user_strategies(email: str, db: Session = Depends(database.get_db)):
@@ -63,27 +63,27 @@ def get_logs(id: int, db: Session = Depends(database.get_db)):
 @app.get("/strategy/{id}")
 def get_strategy_details(id: int, db: Session = Depends(database.get_db)):
     strat = db.query(models.Strategy).filter(models.Strategy.id == id).first()
-    if not strat: raise HTTPException(status_code=404, detail="Strategy not found")
+    if not strat: raise HTTPException(status_code=404, detail="Not found")
     return strat
 
 @app.put("/strategy/{id}")
 def update_strategy(id: int, strat: schemas.StrategyInput, db: Session = Depends(database.get_db)):
     db_strat = db.query(models.Strategy).filter(models.Strategy.id == id).first()
-    if not db_strat: raise HTTPException(status_code=404, detail="Strategy not found")
+    if not db_strat: raise HTTPException(status_code=404, detail="Not found")
     db_strat.name = strat.name
     db_strat.symbol = strat.symbol
     db_strat.logic_configuration = strat.logic
     db.commit()
-    return {"status": "Strategy Updated", "id": id}
+    return {"status": "Updated", "id": id}
 
 @app.post("/strategy/backtest")
 async def run_backtest(strat: schemas.StrategyInput):
     timeframe = strat.logic.get('timeframe', '1h')
     
-    # FETCH DEEP HISTORY
-    df = await backtester.fetch_deep_history(strat.symbol, timeframe)
+    # TYPO FIX: fetch_deep_history -> fetch_historical_data
+    df = await backtester.fetch_historical_data(strat.symbol, timeframe)
     
-    if df.empty: return {"error": f"Could not fetch enough data for {strat.symbol}"}
+    if df.empty: return {"error": f"Could not fetch data for {strat.symbol}"}
 
     results = backtester.run_simulation(df, strat.logic)
     return results
