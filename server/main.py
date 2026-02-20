@@ -6,9 +6,38 @@ from contextlib import asynccontextmanager
 from app import models, database, schemas, crud
 from app.engine import engine as trading_engine
 from app.backtester import backtester
+import ccxt.async_support as ccxt
+
+# --- GLOBAL DATA CACHE ---
+symbol_cache = []
+
+async def refresh_symbols():
+    # Fetch all tradeable symbols from Delta India
+    exchange = None
+    try:
+        exchange = ccxt.delta({
+            'options': { 'defaultType': 'future' },
+            'urls': { 'api': {'public': 'https://api.india.delta.exchange', 'private': 'https://api.india.delta.exchange'} }
+        })
+        markets = await exchange.load_markets()
+        # Filter for only the perpetual futures we can trade
+        perpetual_symbols = [s for s, m in markets.items() if m.get('type') == 'future' and m.get('swap')]
+        
+        global symbol_cache
+        symbol_cache = sorted(perpetual_symbols)
+        print(f"✅ Symbol Cache Updated: {len(symbol_cache)} symbols found.")
+        
+    except Exception as e:
+        print(f"❌ Failed to fetch symbols: {e}")
+    finally:
+        if exchange: await exchange.close()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Fetch symbols on startup
+    await refresh_symbols()
+    
+    # Start live engine
     asyncio.create_task(trading_engine.start())
     yield
     trading_engine.is_running = False
@@ -20,6 +49,11 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, 
 
 @app.get("/")
 def home(): return {"status": "System Online"}
+
+# --- NEW SYMBOLS ENDPOINT ---
+@app.get("/data/symbols")
+def get_symbols():
+    return symbol_cache
 
 @app.post("/auth/sync")
 def sync_user(user: schemas.UserCreate, db: Session = Depends(database.get_db)):
@@ -80,8 +114,7 @@ def update_strategy(id: int, strat: schemas.StrategyInput, db: Session = Depends
 async def run_backtest(strat: schemas.StrategyInput):
     timeframe = strat.logic.get('timeframe', '1h')
     
-    # TYPO FIX: fetch_deep_history -> fetch_historical_data
-    df = await backtester.fetch_historical_data(strat.symbol, timeframe)
+    df = await backtester.fetch_deep_history(strat.symbol, timeframe)
     
     if df.empty: return {"error": f"Could not fetch data for {strat.symbol}"}
 
