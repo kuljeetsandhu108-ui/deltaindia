@@ -8,22 +8,13 @@ from app.engine import engine as trading_engine
 from app.backtester import backtester
 import ccxt.async_support as ccxt
 
-# --- SAFETY NET: HARDCODED FALLBACK LIST ---
-# If API fails, we use these standard Delta India symbols
-DEFAULT_SYMBOLS = [
-    "BTC-USDT", "ETH-USDT", "SOL-USDT", "XRP-USDT", "BNB-USDT",
-    "DOGE-USDT", "ADA-USDT", "MATIC-USDT", "LTC-USDT", "DOT-USDT",
-    "SHIB-USDT", "AVAX-USDT", "LINK-USDT", "UNI-USDT", "ATOM-USDT"
-]
-
-# Initialize with defaults so the UI is never empty
-symbol_cache = DEFAULT_SYMBOLS
+# GLOBAL CACHE
+symbol_cache = ["BTC-USDT", "ETH-USDT", "XRP-USDT", "SOL-USDT"]
 
 async def refresh_symbols():
     global symbol_cache
     exchange = None
     try:
-        print("... Fetching Symbols from Delta India ...")
         exchange = ccxt.delta({
             'options': { 'defaultType': 'future' },
             'urls': { 
@@ -32,33 +23,15 @@ async def refresh_symbols():
             }
         })
         markets = await exchange.load_markets()
-        
-        # BROADER FILTER: Get ANY active market that is a Future/Swap
-        live_symbols = []
-        for symbol, market in markets.items():
-            # Check if active
-            if market.get('active'):
-                # We prefer the 'id' (e.g. BTC-USDT) over the symbol (BTC/USDT:USDT)
-                # because the ID is what we need to send orders.
-                market_id = market.get('id', symbol)
-                live_symbols.append(market_id)
-        
-        if len(live_symbols) > 0:
-            symbol_cache = sorted(list(set(live_symbols)))
-            print(f"✅ Loaded {len(symbol_cache)} Live Pairs from API")
-        else:
-            print("⚠️ API returned 0 symbols. Keeping Defaults.")
-            
+        symbols = [s for s in markets.keys() if ('USDT' in s or 'USD' in s) and ':' not in s]
+        if symbols: symbol_cache = sorted(list(set(symbols)))
+        await exchange.close()
     except Exception as e:
-        print(f"⚠️ Symbol Fetch Failed: {e}. Using Defaults.")
-        # We keep the default list if API fails
-    finally:
-        if exchange: await exchange.close()
+        print(f"⚠️ Symbol Fetch Warning: {e}")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Fetch symbols on startup
-    await refresh_symbols()
+    asyncio.create_task(refresh_symbols())
     asyncio.create_task(trading_engine.start())
     yield
     trading_engine.is_running = False
@@ -72,8 +45,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, 
 def home(): return {"status": "System Online", "symbols": len(symbol_cache)}
 
 @app.get("/data/symbols")
-def get_symbols():
-    return symbol_cache
+def get_symbols(): return symbol_cache
 
 @app.post("/auth/sync")
 def sync_user(user: schemas.UserCreate, db: Session = Depends(database.get_db)):
@@ -103,6 +75,20 @@ def get_user_strategies(email: str, db: Session = Depends(database.get_db)):
     user = crud.get_user_by_email(db, email)
     if not user: return []
     return user.strategies
+
+# --- NEW TOGGLE ENDPOINT ---
+@app.post("/strategies/{id}/toggle")
+def toggle_strategy(id: int, db: Session = Depends(database.get_db)):
+    strat = db.query(models.Strategy).filter(models.Strategy.id == id).first()
+    if not strat: raise HTTPException(status_code=404, detail="Not Found")
+    
+    # Flip the switch
+    strat.is_running = not strat.is_running
+    db.commit()
+    
+    status = "RUNNING" if strat.is_running else "PAUSED"
+    return {"status": status, "is_running": strat.is_running}
+# ---------------------------
 
 @app.delete("/strategies/{id}")
 def delete_strategy(id: int, db: Session = Depends(database.get_db)):
