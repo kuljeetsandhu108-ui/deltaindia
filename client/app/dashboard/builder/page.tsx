@@ -140,13 +140,4 @@ export default function StrategyBuilder() {
       <Suspense fallback={<div className="text-slate-500">Loading...</div>}><BuilderContent /></Suspense>
     </div>
   );
-}```
-
-### 🚀 Step 3: Deploy
-
-1.  **Laptop:** `git add .`, `git commit -m "Live Symbol Fetching"` -> `git push origin main`.
-2.  **Server:** `cd ~/app`, `git pull`, `docker compose up -d --build`.
-
-**Result:**
-Go to the Builder. The **Pair** dropdown will now contain the **100+ REAL symbols** from Delta Exchange India.
-If you select `XRP-USD-PERP` (or whatever the real name is) and run the backtest, it will find the data. 🚀
+}
