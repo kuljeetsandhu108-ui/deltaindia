@@ -8,13 +8,15 @@ from app.engine import engine as trading_engine
 from app.backtester import backtester
 import ccxt.async_support as ccxt
 
-# GLOBAL CACHE
-symbol_cache = ["BTC-USDT", "ETH-USDT", "XRP-USDT", "SOL-USDT"]
+# DEFAULT FALLBACK
+DEFAULT_SYMBOLS = ["BTC-USDT", "ETH-USDT", "XRP-USDT", "SOL-USDT"]
+symbol_cache = DEFAULT_SYMBOLS
 
 async def refresh_symbols():
     global symbol_cache
     exchange = None
     try:
+        print("... Fetching Live Symbols from Delta India ...")
         exchange = ccxt.delta({
             'options': { 'defaultType': 'future' },
             'urls': { 
@@ -23,14 +25,30 @@ async def refresh_symbols():
             }
         })
         markets = await exchange.load_markets()
-        symbols = [s for s in markets.keys() if ('USDT' in s or 'USD' in s) and ':' not in s]
-        if symbols: symbol_cache = sorted(list(set(symbols)))
-        await exchange.close()
+        
+        # Get all USDT futures
+        live_symbols = []
+        for symbol, market in markets.items():
+            if market.get('active'):
+                # Prefer ID (BTC-USDT) over Symbol (BTC/USDT:USDT)
+                m_id = market.get('id', symbol)
+                if 'USDT' in m_id:
+                    live_symbols.append(m_id)
+        
+        if len(live_symbols) > 5:
+            symbol_cache = sorted(list(set(live_symbols)))
+            print(f"✅ Loaded {len(symbol_cache)} Live Pairs")
+        else:
+            print("⚠️ API returned few symbols. Keeping defaults.")
+
     except Exception as e:
-        print(f"⚠️ Symbol Fetch Warning: {e}")
+        print(f"⚠️ Symbol Fetch Failed: {e}")
+    finally:
+        if exchange: await exchange.close()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Try once on startup
     asyncio.create_task(refresh_symbols())
     asyncio.create_task(trading_engine.start())
     yield
@@ -39,13 +57,20 @@ async def lifespan(app: FastAPI):
 models.Base.metadata.create_all(bind=database.engine)
 app = FastAPI(title="AlgoTradeIndia Engine", lifespan=lifespan)
 
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
+)
 
 @app.get("/")
 def home(): return {"status": "System Online", "symbols": len(symbol_cache)}
 
+# --- SMART ENDPOINT: Refresh if list is short ---
 @app.get("/data/symbols")
-def get_symbols(): return symbol_cache
+async def get_symbols():
+    # If we only have the default few symbols, try to fetch again
+    if len(symbol_cache) <= len(DEFAULT_SYMBOLS):
+        await refresh_symbols()
+    return symbol_cache
 
 @app.post("/auth/sync")
 def sync_user(user: schemas.UserCreate, db: Session = Depends(database.get_db)):
@@ -75,20 +100,6 @@ def get_user_strategies(email: str, db: Session = Depends(database.get_db)):
     user = crud.get_user_by_email(db, email)
     if not user: return []
     return user.strategies
-
-# --- NEW TOGGLE ENDPOINT ---
-@app.post("/strategies/{id}/toggle")
-def toggle_strategy(id: int, db: Session = Depends(database.get_db)):
-    strat = db.query(models.Strategy).filter(models.Strategy.id == id).first()
-    if not strat: raise HTTPException(status_code=404, detail="Not Found")
-    
-    # Flip the switch
-    strat.is_running = not strat.is_running
-    db.commit()
-    
-    status = "RUNNING" if strat.is_running else "PAUSED"
-    return {"status": status, "is_running": strat.is_running}
-# ---------------------------
 
 @app.delete("/strategies/{id}")
 def delete_strategy(id: int, db: Session = Depends(database.get_db)):
@@ -120,6 +131,6 @@ def update_strategy(id: int, strat: schemas.StrategyInput, db: Session = Depends
 async def run_backtest(strat: schemas.StrategyInput):
     timeframe = strat.logic.get('timeframe', '1h')
     df = await backtester.fetch_historical_data(strat.symbol, timeframe, limit=3000)
-    if df.empty: return {"error": f"Could not fetch data for {strat.symbol}"}
+    if df.empty: return {"error": f"No data for {strat.symbol}"}
     results = backtester.run_simulation(df, strat.logic)
     return results
