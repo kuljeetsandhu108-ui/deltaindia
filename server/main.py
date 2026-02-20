@@ -8,13 +8,22 @@ from app.engine import engine as trading_engine
 from app.backtester import backtester
 import ccxt.async_support as ccxt
 
-# GLOBAL CACHE
-symbol_cache = ["BTC-USDT", "ETH-USDT", "XRP-USDT", "SOL-USDT"] # Default fallbacks
+# --- SAFETY NET: HARDCODED FALLBACK LIST ---
+# If API fails, we use these standard Delta India symbols
+DEFAULT_SYMBOLS = [
+    "BTC-USDT", "ETH-USDT", "SOL-USDT", "XRP-USDT", "BNB-USDT",
+    "DOGE-USDT", "ADA-USDT", "MATIC-USDT", "LTC-USDT", "DOT-USDT",
+    "SHIB-USDT", "AVAX-USDT", "LINK-USDT", "UNI-USDT", "ATOM-USDT"
+]
+
+# Initialize with defaults so the UI is never empty
+symbol_cache = DEFAULT_SYMBOLS
 
 async def refresh_symbols():
     global symbol_cache
+    exchange = None
     try:
-        # Connect to Delta India to get real symbols
+        print("... Fetching Symbols from Delta India ...")
         exchange = ccxt.delta({
             'options': { 'defaultType': 'future' },
             'urls': { 
@@ -23,18 +32,33 @@ async def refresh_symbols():
             }
         })
         markets = await exchange.load_markets()
-        # Get all Futures ending in USDT
-        symbols = [s for s in markets.keys() if ('USDT' in s or 'USD' in s) and ':' not in s]
-        if symbols:
-            symbol_cache = sorted(list(set(symbols)))
-            print(f"✅ Loaded {len(symbol_cache)} Symbols from Delta India")
-        await exchange.close()
+        
+        # BROADER FILTER: Get ANY active market that is a Future/Swap
+        live_symbols = []
+        for symbol, market in markets.items():
+            # Check if active
+            if market.get('active'):
+                # We prefer the 'id' (e.g. BTC-USDT) over the symbol (BTC/USDT:USDT)
+                # because the ID is what we need to send orders.
+                market_id = market.get('id', symbol)
+                live_symbols.append(market_id)
+        
+        if len(live_symbols) > 0:
+            symbol_cache = sorted(list(set(live_symbols)))
+            print(f"✅ Loaded {len(symbol_cache)} Live Pairs from API")
+        else:
+            print("⚠️ API returned 0 symbols. Keeping Defaults.")
+            
     except Exception as e:
-        print(f"⚠️ Symbol Fetch Warning: {e}")
+        print(f"⚠️ Symbol Fetch Failed: {e}. Using Defaults.")
+        # We keep the default list if API fails
+    finally:
+        if exchange: await exchange.close()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    asyncio.create_task(refresh_symbols())
+    # Fetch symbols on startup
+    await refresh_symbols()
     asyncio.create_task(trading_engine.start())
     yield
     trading_engine.is_running = False
@@ -42,18 +66,11 @@ async def lifespan(app: FastAPI):
 models.Base.metadata.create_all(bind=database.engine)
 app = FastAPI(title="AlgoTradeIndia Engine", lifespan=lifespan)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 @app.get("/")
-def home(): return {"status": "System Online", "symbols_loaded": len(symbol_cache)}
+def home(): return {"status": "System Online", "symbols": len(symbol_cache)}
 
-# --- CRITICAL MISSING ENDPOINT ---
 @app.get("/data/symbols")
 def get_symbols():
     return symbol_cache
@@ -116,11 +133,7 @@ def update_strategy(id: int, strat: schemas.StrategyInput, db: Session = Depends
 @app.post("/strategy/backtest")
 async def run_backtest(strat: schemas.StrategyInput):
     timeframe = strat.logic.get('timeframe', '1h')
-    
-    # Use fetch_historical_data (matching the class method name)
     df = await backtester.fetch_historical_data(strat.symbol, timeframe, limit=3000)
-    
-    if df.empty: return {"error": f"Could not fetch data for {strat.symbol}. Try a different pair."}
-
+    if df.empty: return {"error": f"Could not fetch data for {strat.symbol}"}
     results = backtester.run_simulation(df, strat.logic)
     return results
