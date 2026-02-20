@@ -120,9 +120,10 @@ function BuilderContent() {
                         <div className="bg-slate-900 p-5 rounded-2xl border border-slate-700"><div className="text-slate-500 text-xs uppercase mb-1 flex items-center gap-1"><TrendingUp size={12}/> Win Rate</div><div className="text-3xl font-bold text-blue-400">{backtestResult.metrics.win_rate}%</div></div>
                         <div className="bg-slate-900 p-5 rounded-2xl border border-slate-700"><div className="text-slate-500 text-xs uppercase mb-1 flex items-center gap-1"><List size={12}/> Trades</div><div className="text-3xl font-bold text-white">{backtestResult.metrics.total_trades}</div></div>
                     </div>
+                    {backtestResult.metrics.audit && (<div className="grid grid-cols-2 md:grid-cols-4 gap-4"><div className="bg-slate-900 p-4 rounded-xl border border-slate-800"><div className="text-slate-500 text-[10px] uppercase">Max Drawdown</div><div className="text-lg font-bold text-red-400">{backtestResult.metrics.audit.max_drawdown}%</div></div><div className="bg-slate-900 p-4 rounded-xl border border-slate-800"><div className="text-slate-500 text-[10px] uppercase">Sharpe Ratio</div><div className="text-lg font-bold text-white">{backtestResult.metrics.audit.sharpe_ratio}</div></div><div className="bg-slate-900 p-4 rounded-xl border border-slate-800"><div className="text-slate-500 text-[10px] uppercase">Profit Factor</div><div className="text-lg font-bold text-emerald-400">{backtestResult.metrics.audit.profit_factor}</div></div><div className="bg-slate-900 p-4 rounded-xl border border-slate-800"><div className="text-slate-500 text-[10px] uppercase">Expectancy</div><div className="text-lg font-bold text-white"></div></div></div>)}
+                    <div className="h-80 w-full bg-slate-900 rounded-2xl border border-slate-700 p-4"><ResponsiveContainer width="100%" height="100%"><LineChart data={backtestResult.equity}><CartesianGrid strokeDasharray="3 3" stroke="#334155" /><XAxis dataKey="time" hide /><YAxis domain={['auto', 'auto']} stroke="#94a3b8" fontSize={10} /><Tooltip contentStyle={{backgroundColor: '#0f172a', border: '1px solid #334155'}} /><Legend /><Line name="Strategy Equity" type="monotone" dataKey="balance" stroke="#3b82f6" strokeWidth={2} dot={false} /><Line name="Buy & Hold" type="monotone" dataKey="buy_hold" stroke="#eab308" strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer></div>
 
-                    <div className="h-80 w-full bg-slate-900 rounded-2xl border border-slate-700 p-4"><ResponsiveContainer width="100%" height="100%"><LineChart data={backtestResult.equity}><CartesianGrid strokeDasharray="3 3" stroke="#334155" /><XAxis dataKey="time" hide /><YAxis domain={['auto', 'auto']} stroke="#94a3b8" fontSize={10} /><Tooltip contentStyle={{backgroundColor: '#0f172a', border: '1px solid #334155'}} /><Legend /><Line name="Strategy" type="monotone" dataKey="balance" stroke="#3b82f6" strokeWidth={2} dot={false} /><Line name="Buy & Hold" type="monotone" dataKey="buy_hold" stroke="#eab308" strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer></div>
-
+                    {/* PROFESSIONAL TRADE LEDGER - BUG FIXES APPLIED */}
                     <div className="bg-slate-900 rounded-2xl border border-slate-700 overflow-hidden">
                         <div className="p-4 border-b border-slate-700 font-bold flex items-center gap-2 bg-slate-800/50"><List size={18}/> Comprehensive Trade Ledger (IST)</div>
                         <div className="max-h-96 overflow-y-auto">
@@ -150,7 +151,7 @@ function BuilderContent() {
                                                 </span>
                                             </td>
                                             <td className={'px-6 py-4 text-right font-mono font-bold ' + (t.pnl > 0 ? 'text-emerald-400' : 'text-red-400')}>
-                                                {t.pnl > 0 ? '+' : ''}
+                                                {(t.pnl > 0 ? '+' : '') + '$' + formatPrice(t.pnl)}
                                             </td>
                                         </tr>
                                     ))}
