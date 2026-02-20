@@ -20,7 +20,6 @@ function BuilderContent() {
   const [quantity, setQuantity] = useState(1);
   const [stopLoss, setStopLoss] = useState(1.0);
   const [takeProfit, setTakeProfit] = useState(2.0);
-  
   const [conditions, setConditions] = useState([{ id: 1, left: { type: 'rsi', params: { length: 14 } }, operator: 'LESS_THAN', right: { type: 'number', params: { value: 30 } } }]);
   const [backtestLoading, setBacktestLoading] = useState(false);
   const [backtestResult, setBacktestResult] = useState<any>(null);
@@ -90,27 +89,32 @@ function BuilderContent() {
     );
   };
 
-  const formatIST = (isoString: string) => new Date(isoString).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'short' });
+  const formatIST = (isoString: string) => {
+      try { return new Date(isoString).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'short' }); }
+      catch { return "-"; }
+  };
+
+  // Safe Price Formatter (Prevents Empty Cells)
+  const formatPrice = (p: any) => {
+      const num = Number(p);
+      if (isNaN(num) || p === undefined || p === null) return "0.00";
+      return num.toFixed(2);
+  };
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 pb-20">
-        {/* SIDEBAR SETTINGS */}
         <div className="col-span-1 space-y-6">
           <div className="bg-slate-900 p-6 rounded-xl border border-slate-800"><h3 className="text-lg font-semibold mb-4 text-cyan-400 flex items-center gap-2"><Zap size={18} /> Asset</h3><div className="space-y-4"><div><label className="block text-sm text-slate-400 mb-1">Name</label><input type="text" value={strategyName} onChange={(e) => setStrategyName(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded p-2" /></div><div><label className="block text-sm text-slate-400 mb-1">Pair</label><select value={symbol} onChange={(e) => setSymbol(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded p-2"><option value="BTCUSD">BTC/USD</option><option value="ETHUSD">ETH/USD</option><option value="XRPUSD">XRP/USD</option></select></div><div><label className="block text-sm text-slate-400 mb-1 flex items-center gap-2"><Clock size={12}/> Timeframe</label><select value={timeframe} onChange={(e) => setTimeframe(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded p-2"><option value="1m">1 Min</option><option value="5m">5 Min</option><option value="15m">15 Min</option><option value="1h">1 Hour</option><option value="4h">4 Hour</option></select></div></div></div>
           <div className="bg-slate-900 p-6 rounded-xl border border-slate-800"><h3 className="text-lg font-semibold mb-4 text-orange-400 flex items-center gap-2"><AlertTriangle size={18} /> Risk</h3><div className="space-y-4"><div><label className="block text-sm text-slate-400 mb-1">Qty</label><input type="number" value={quantity} onChange={(e) => setQuantity(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-700 rounded p-2" /></div><div className="grid grid-cols-2 gap-4"><div><label className="block text-sm text-red-400 mb-1">SL %</label><input type="number" step="0.1" value={stopLoss} onChange={(e) => setStopLoss(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-700 rounded p-2" /></div><div><label className="block text-sm text-emerald-400 mb-1">TP %</label><input type="number" step="0.1" value={takeProfit} onChange={(e) => setTakeProfit(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-700 rounded p-2" /></div></div></div></div>
           <div className="flex flex-col gap-3"><button onClick={handleBacktest} disabled={backtestLoading} className="w-full py-4 bg-slate-800 border border-slate-600 rounded-lg font-bold flex items-center justify-center gap-2 hover:bg-slate-700">{backtestLoading ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div> : <BarChart2 size={18} />} Run Simulation</button><button onClick={handleDeploy} className="w-full py-4 bg-gradient-to-r from-emerald-600 to-cyan-600 rounded-lg font-bold flex items-center justify-center gap-2 hover:scale-105">{editId ? <Save size={18} /> : <Play size={18} />} {editId ? 'Update' : 'Deploy'}</button></div>
         </div>
 
-        {/* MAIN AREA */}
         <div className="col-span-3 space-y-4">
             <h3 className="text-lg font-semibold text-emerald-400 flex items-center gap-2"><Settings2 size={18}/> Entry Logic</h3>
             <div className="space-y-4">{conditions.map((c, i) => (<motion.div key={c.id} initial={{opacity:0, y:10}} animate={{opacity:1, y:0}} className="flex flex-col md:flex-row items-center gap-4 bg-slate-900 p-4 rounded-xl border border-slate-800 relative"><div className="text-slate-500 font-bold bg-slate-800 w-10 h-10 rounded-full flex items-center justify-center shrink-0">{i === 0 ? 'IF' : 'AND'}</div><IndicatorSelect data={c.left} onChange={(f: string, v: any) => updateCondition(c.id, 'left', f, v)} onParamChange={(p: string, v: any) => updateParam(c.id, 'left', p, v)} /><select className="bg-slate-950 text-emerald-400 font-bold border border-slate-700 rounded px-3 py-2 outline-none" value={c.operator} onChange={(e) => { const newConds = [...conditions]; newConds.find(x => x.id === c.id)!.operator = e.target.value; setConditions(newConds); }}><option value="CROSSES_ABOVE">Crosses Above</option><option value="CROSSES_BELOW">Crosses Below</option><option value="GREATER_THAN">Greater Than</option><option value="LESS_THAN">Less Than</option></select><IndicatorSelect data={c.right} onChange={(f: string, v: any) => updateCondition(c.id, 'right', f, v)} onParamChange={(p: string, v: any) => updateParam(c.id, 'right', p, v)} /><button onClick={() => setConditions(conditions.filter(x => x.id !== c.id))} className="absolute top-2 right-2 text-slate-600 hover:text-red-400"><Trash2 size={16}/></button></motion.div>))}</div><button onClick={addCondition} className="w-full py-4 border-2 border-dashed border-slate-800 rounded-xl text-slate-600 hover:border-slate-600 flex items-center justify-center gap-2 transition-all"><Plus size={20} /> Add Logic Block</button>
             
-            {/* FULL AUDIT REPORT - NO TABS - ALL VISIBLE */}
             {backtestResult && (
                 <motion.div initial={{opacity:0, y:20}} animate={{opacity:1, y:0}} className="mt-8 space-y-6">
-                    
-                    {/* 1. KEY METRICS */}
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                         <div className="bg-slate-900 p-5 rounded-2xl border border-slate-700"><div className="text-slate-500 text-xs uppercase mb-1 flex items-center gap-1"><DollarSign size={12}/> Balance</div><div className="text-3xl font-bold text-white"></div></div>
                         <div className="bg-slate-900 p-5 rounded-2xl border border-slate-700"><div className="text-slate-500 text-xs uppercase mb-1 flex items-center gap-1"><Activity size={12}/> Return</div><div className={'text-3xl font-bold ' + (backtestResult.metrics.total_return_pct >= 0 ? 'text-emerald-400' : 'text-red-400')}>{backtestResult.metrics.total_return_pct}%</div></div>
@@ -118,34 +122,19 @@ function BuilderContent() {
                         <div className="bg-slate-900 p-5 rounded-2xl border border-slate-700"><div className="text-slate-500 text-xs uppercase mb-1 flex items-center gap-1"><List size={12}/> Trades</div><div className="text-3xl font-bold text-white">{backtestResult.metrics.total_trades}</div></div>
                     </div>
 
-                    {/* 2. ADVANCED RISK METRICS */}
                     {backtestResult.metrics.audit && (
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800"><div className="text-slate-500 text-[10px] uppercase">Max Drawdown</div><div className="text-lg font-bold text-red-400">{backtestResult.metrics.audit.max_drawdown}%</div></div>
-                            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800"><div className="text-slate-500 text-[10px] uppercase">Sharpe Ratio</div><div className="text-lg font-bold text-white">{backtestResult.metrics.audit.sharpe_ratio}</div></div>
-                            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800"><div className="text-slate-500 text-[10px] uppercase">Profit Factor</div><div className="text-lg font-bold text-emerald-400">{backtestResult.metrics.audit.profit_factor}</div></div>
-                            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800"><div className="text-slate-500 text-[10px] uppercase">Expectancy</div><div className="text-lg font-bold text-white"></div></div>
+                            <div className="bg-slate-900 p-4 rounded-xl border border-slate-800"><div className="text-slate-500 text-[10px] uppercase">Max Drawdown</div><div className="text-lg font-bold text-red-400">{backtestResult.metrics.audit.max_drawdown}%</div></div>
+                            <div className="bg-slate-900 p-4 rounded-xl border border-slate-800"><div className="text-slate-500 text-[10px] uppercase">Sharpe Ratio</div><div className="text-lg font-bold text-white">{backtestResult.metrics.audit.sharpe_ratio}</div></div>
+                            <div className="bg-slate-900 p-4 rounded-xl border border-slate-800"><div className="text-slate-500 text-[10px] uppercase">Profit Factor</div><div className="text-lg font-bold text-emerald-400">{backtestResult.metrics.audit.profit_factor}</div></div>
+                            <div className="bg-slate-900 p-4 rounded-xl border border-slate-800"><div className="text-slate-500 text-[10px] uppercase">Expectancy</div><div className="text-lg font-bold text-white"></div></div>
                         </div>
                     )}
 
-                    {/* 3. EQUITY CURVE */}
-                    <div className="h-80 w-full bg-slate-900 rounded-2xl border border-slate-700 p-4">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <LineChart data={backtestResult.equity}>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                                <XAxis dataKey="time" hide />
-                                <YAxis domain={['auto', 'auto']} stroke="#94a3b8" fontSize={10} />
-                                <Tooltip contentStyle={{backgroundColor: '#0f172a', border: '1px solid #334155'}} />
-                                <Legend />
-                                <Line name="Strategy Equity" type="monotone" dataKey="balance" stroke="#3b82f6" strokeWidth={2} dot={false} />
-                                <Line name="Buy & Hold" type="monotone" dataKey="buy_hold" stroke="#eab308" strokeWidth={2} dot={false} />
-                            </LineChart>
-                        </ResponsiveContainer>
-                    </div>
+                    <div className="h-80 w-full bg-slate-900 rounded-2xl border border-slate-700 p-4"><ResponsiveContainer width="100%" height="100%"><LineChart data={backtestResult.equity}><CartesianGrid strokeDasharray="3 3" stroke="#334155" /><XAxis dataKey="time" hide /><YAxis domain={['auto', 'auto']} stroke="#94a3b8" fontSize={10} /><Tooltip contentStyle={{backgroundColor: '#0f172a', border: '1px solid #334155'}} /><Legend /><Line name="Strategy" type="monotone" dataKey="balance" stroke="#3b82f6" strokeWidth={2} dot={false} /><Line name="Buy & Hold" type="monotone" dataKey="buy_hold" stroke="#eab308" strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer></div>
 
-                    {/* 4. DETAILED TRADE LEDGER */}
                     <div className="bg-slate-900 rounded-2xl border border-slate-700 overflow-hidden">
-                        <div className="p-4 border-b border-slate-700 font-bold flex items-center gap-2 bg-slate-800/50"><List size={18}/> Comprehensive Trade Ledger</div>
+                        <div className="p-4 border-b border-slate-700 font-bold flex items-center gap-2 bg-slate-800/50"><List size={18}/> Comprehensive Trade Ledger (IST)</div>
                         <div className="max-h-96 overflow-y-auto">
                             <table className="w-full text-sm text-left">
                                 <thead className="text-xs text-slate-400 uppercase bg-slate-950 sticky top-0">
@@ -179,7 +168,6 @@ function BuilderContent() {
                             </table>
                         </div>
                     </div>
-
                 </motion.div>
             )}
         </div>
