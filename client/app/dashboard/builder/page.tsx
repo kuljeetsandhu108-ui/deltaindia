@@ -15,20 +15,22 @@ function BuilderContent() {
   const router = useRouter();
   const editId = searchParams.get('edit'); 
 
-  // --- FIXED: All state variables properly declared ---
-  const = useState("My Pro Algo");
-  const = useState("BTCUSD");
-  const = useState("1h");
-  const = useState(1);
-  const = useState(1.0);
-  const = useState(2.0);
+  // --- FIXED: ALL VARIABLE NAMES INCLUDED ---
+  const [strategyName, setStrategyName] = useState("My Pro Algo");
+  const [symbol, setSymbol] = useState("BTCUSD");
+  const [timeframe, setTimeframe] = useState("1h");
+  const [quantity, setQuantity] = useState(1);
+  const [stopLoss, setStopLoss] = useState(1.0);
+  const [takeProfit, setTakeProfit] = useState(2.0);
   
-  const = useState<string[]>([]);
+  const [symbolList, setSymbolList] = useState<string[]>([]);
   
-  const = useState<any[]>();
+  const [conditions, setConditions] = useState<any[]>([
+    { id: 1, left: { type: 'rsi', params: { length: 14 } }, operator: 'LESS_THAN', right: { type: 'number', params: { value: 30 } } }
+  ]);
   
-  const = useState(false);
-  const = useState<any>(null);
+  const [backtestLoading, setBacktestLoading] = useState(false);
+  const [backtestResult, setBacktestResult] = useState<any>(null);
 
   // FETCH LIVE SYMBOLS
   useEffect(() => {
@@ -40,13 +42,13 @@ function BuilderContent() {
                 const data = await res.json();
                 if (data && data.length > 0) {
                     setSymbolList(data);
-                    if (!editId) setSymbol(data); 
+                    if (!editId) setSymbol(data[0]); 
                 }
             }
         } catch(e) { console.error("Could not fetch symbols", e); }
     };
     fetchSymbols();
-  },);
+  }, []);
 
   // FETCH EXISTING STRATEGY IF EDITING
   useEffect(() => {
@@ -66,7 +68,7 @@ function BuilderContent() {
                     setStopLoss(logic.sl || 0); 
                     setTakeProfit(logic.tp || 0);
                     
-                    const safeConditions = (logic.conditions ||[]).map((c: any) => ({
+                    const safeConditions = (logic.conditions || []).map((c: any) => ({
                         id: c.id || Math.random(),
                         left: c.left || { type: 'close', params: {} },
                         operator: c.operator || 'GREATER_THAN',
@@ -78,11 +80,10 @@ function BuilderContent() {
         };
         fetchDetails();
     }
-  },);
+  }, [editId, session]);
 
-  // --- FIXED: Condition Handlers ---
   const addCondition = () => { 
-    setConditions(); 
+    setConditions([...conditions, { id: Date.now(), left: { type: 'rsi', params: { length: 14 } }, operator: 'LESS_THAN', right: { type: 'number', params: { value: 30 } } }]); 
   };
   
   const removeCondition = (id: number) => { 
@@ -96,23 +97,24 @@ function BuilderContent() {
             const ind = INDICATORS.find(i => i.value === val); 
             const defaultParams: any = {}; 
             if (ind && ind.params) {
-                ind.params.forEach(p => defaultParams = p.def); 
+                ind.params.forEach(p => { defaultParams[p.name] = p.def; }); 
             }
-            return { ...c,: { type: val, params: defaultParams } }; 
+            return { ...c, [side]: { type: val, params: defaultParams } }; 
         } 
-        return { ...c,: { ...c,: val } }; 
+        return { ...c, [side]: { ...c[side], [field]: val } }; 
     })); 
   };
 
   const updateParam = (id: number, side: 'left' | 'right', paramName: string, val: any) => { 
     setConditions(conditions.map(c => { 
         if (c.id !== id) return c; 
-        const sideData = c;
-        return { ...c,: { ...sideData, params: { ...sideData.params,: val } } }; 
+        // Force Type Casting for TS
+        const sideData: any = (side === 'left' ? c.left : c.right);
+        const newSide = { ...sideData, params: { ...sideData.params, [paramName]: val } };
+        return { ...c, [side]: newSide }; 
     })); 
   };
 
-  // --- ACTIONS ---
   const handleDeploy = async () => {
     if (!session?.user?.email) return alert("Please login first");
     const payload = { 
@@ -161,13 +163,12 @@ function BuilderContent() {
     setBacktestLoading(false);
   };
 
-  // --- FIXED: Indicator Select Component ---
   const IndicatorSelect = ({ side, data, onChange, onParamChange }: any) => {
     if (!data || !data.type) return <div className="text-red-500 text-xs p-2">Invalid Data</div>;
     const selectedDef = INDICATORS.find(i => i.value === data.type);
     
     return (
-        <div className="flex flex-col gap-2 bg-slate-950 p-3 rounded-lg border border-slate-700 min-w-">
+        <div className="flex flex-col gap-2 bg-slate-950 p-3 rounded-lg border border-slate-700 min-w-[250px]">
             <div className="relative">
                 <select className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-sm appearance-none outline-none focus:border-emerald-500" value={data.type} onChange={(e) => onChange('type', e.target.value)}>
                     {INDICATORS.map(ind => (<option key={ind.value} value={ind.value}>{ind.label}</option>))}
@@ -178,11 +179,11 @@ function BuilderContent() {
                 <div className="grid grid-cols-2 gap-2 mt-1">
                     {selectedDef.params.map((p: any) => (
                         <div key={p.name}>
-                            <label className="text- text-slate-500 uppercase">{p.name}</label>
+                            <label className="text-[10px] text-slate-500 uppercase">{p.name}</label>
                             <input 
                               type={p.name === 'source' ? 'text' : 'number'} 
                               className="w-full bg-black/30 border border-slate-800 rounded px-2 py-1 text-xs text-cyan-400" 
-                              value={data.params?. || ''} 
+                              value={data.params?.[p.name] || ''} 
                               onChange={(e) => onParamChange(p.name, e.target.value)} 
                             />
                         </div>
@@ -275,12 +276,11 @@ function BuilderContent() {
                         
                         <IndicatorSelect data={c.left} onChange={(f: string, v: any) => updateCondition(c.id, 'left', f, v)} onParamChange={(p: string, v: any) => updateParam(c.id, 'left', p, v)} />
                         
-                        {/* FIXED: Select Handler */}
                         <select 
                           className="bg-slate-950 text-emerald-400 font-bold border border-slate-700 rounded px-3 py-2 outline-none" 
                           value={c.operator} 
                           onChange={(e) => { 
-                            const newConds =; 
+                            const newConds = [...conditions]; 
                             const target = newConds.find(x => x.id === c.id);
                             if (target) target.operator = e.target.value; 
                             setConditions(newConds); 
@@ -328,7 +328,7 @@ function BuilderContent() {
                             <LineChart data={backtestResult.equity}>
                                 <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                                 <XAxis dataKey="time" hide />
-                                <YAxis domain={} stroke="#94a3b8" fontSize={10} />
+                                <YAxis domain={['auto', 'auto']} stroke="#94a3b8" fontSize={10} />
                                 <Tooltip contentStyle={{backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '8px'}} />
                                 <Legend />
                                 <Line name="Strategy Equity" type="monotone" dataKey="balance" stroke="#3b82f6" strokeWidth={2} dot={false} />
