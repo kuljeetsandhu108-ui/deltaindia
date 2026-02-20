@@ -2,7 +2,7 @@
 import { useSession } from "next-auth/react";
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Activity, Plus, Zap, BarChart3, Settings, PlayCircle, Power, Trash2, Terminal, X, Edit3, PauseCircle, Play } from "lucide-react";
+import { Activity, Plus, Zap, BarChart3, Settings, PlayCircle, Power, Trash2, Terminal, X, Edit3, PauseCircle, Play, Loader2 } from "lucide-react";
 import Link from 'next/link';
 
 export default function Dashboard() {
@@ -10,6 +10,7 @@ export default function Dashboard() {
   const [strategies, setStrategies] = useState([]);
   const [selectedStratId, setSelectedStratId] = useState<number | null>(null);
   const [logs, setLogs] = useState([]);
+  const [togglingId, setTogglingId] = useState<number | null>(null); // NEW: Track which button is loading
 
   useEffect(() => { if (session?.user?.email) fetchStrategies(); }, [session]);
 
@@ -34,11 +35,13 @@ export default function Dashboard() {
   };
 
   const handleToggle = async (id: number) => {
+    setTogglingId(id); // Start Loading
     try {
         const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
         await fetch(apiUrl + '/strategies/' + id + '/toggle', { method: 'POST' });
-        fetchStrategies(); // Refresh UI
+        await fetchStrategies(); // Refresh UI
     } catch (e) { alert("Connection Error"); }
+    setTogglingId(null); // Stop Loading
   };
 
   const handleDelete = async (id: number) => {
@@ -109,9 +112,8 @@ export default function Dashboard() {
               <motion.div initial={{opacity:0, y:20}} animate={{opacity:1, y:0}} key={strat.id} className={'p-8 rounded-[2rem] border transition-all group relative hover:shadow-2xl hover:shadow-black/50 ' + (strat.is_running ? 'bg-slate-900 border-slate-800 hover:border-emerald-500/30' : 'bg-slate-900/50 border-slate-800 opacity-75')}>
                 <div className="flex justify-between items-start mb-6">
                   <div className="flex gap-2">
-                    {/* PLAY PAUSE BUTTON */}
-                    <button onClick={() => handleToggle(strat.id)} className={'w-12 h-12 flex items-center justify-center rounded-full transition-all shadow-lg hover:scale-105 ' + (strat.is_running ? 'bg-yellow-500/10 text-yellow-500 hover:bg-yellow-500 hover:text-black' : 'bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500 hover:text-white')}>
-                        {strat.is_running ? <PauseCircle size={24} /> : <Play size={24} className="ml-1" />}
+                    <button onClick={() => handleToggle(strat.id)} disabled={togglingId === strat.id} className={w-12 h-12 flex items-center justify-center rounded-full transition-all shadow-lg hover:scale-105 }>
+                        {togglingId === strat.id ? <Loader2 size={24} className="animate-spin" /> : (strat.is_running ? <PauseCircle size={24} /> : <Play size={24} className="ml-1" />)}
                     </button>
                   </div>
                   <div className="flex gap-2">

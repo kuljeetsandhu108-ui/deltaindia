@@ -8,8 +8,8 @@ from app.engine import engine as trading_engine
 from app.backtester import backtester
 import ccxt.async_support as ccxt
 
-# DEFAULT FALLBACK
-DEFAULT_SYMBOLS = ["BTCUSD", "ETHUSD", "XRPUSD", "SOLUSD"]
+# --- GLOBAL SYMBOL CACHE ---
+DEFAULT_SYMBOLS = ["BTC-USDT", "ETH-USDT", "XRP-USDT", "SOL-USDT"]
 symbol_cache = DEFAULT_SYMBOLS
 
 async def refresh_symbols():
@@ -28,18 +28,10 @@ async def refresh_symbols():
         
         live_symbols = []
         for symbol, market in markets.items():
-            # 1. MUST BE ACTIVE
-            if not market.get('active'): continue
-            
-            # 2. MUST BE A SWAP (Perpetual Future) - Filter out Options
-            if market.get('type') != 'swap' and market.get('type') != 'future': continue
-
-            # 3. GET THE ID (e.g. BTCUSD)
-            m_id = market.get('id', symbol)
-            
-            # 4. FILTER FOR USD PAIRS
-            if m_id.endswith('USD') or m_id.endswith('USDT'):
-                live_symbols.append(m_id)
+            if market.get('active'):
+                m_id = market.get('id', symbol)
+                if 'USDT' in m_id or 'USD' in m_id:
+                    live_symbols.append(m_id)
         
         if len(live_symbols) > 0:
             symbol_cache = sorted(list(set(live_symbols)))
@@ -48,15 +40,17 @@ async def refresh_symbols():
             print("⚠️ API returned 0 symbols. Keeping defaults.")
 
     except Exception as e:
-        print(f"⚠️ Symbol Fetch Failed: {e}")
+        print(f"⚠️ Symbol Fetch Warning: {e}")
     finally:
         if exchange: await exchange.close()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Startup tasks
     asyncio.create_task(refresh_symbols())
     asyncio.create_task(trading_engine.start())
     yield
+    # Shutdown tasks
     trading_engine.is_running = False
 
 models.Base.metadata.create_all(bind=database.engine)
@@ -67,10 +61,11 @@ app.add_middleware(
 )
 
 @app.get("/")
-def home(): return {"status": "System Online", "symbols_loaded": len(symbol_cache)}
+def home(): return {"status": "System Online", "symbols": len(symbol_cache)}
 
 @app.get("/data/symbols")
-def get_symbols():
+async def get_symbols():
+    if len(symbol_cache) <= 4: await refresh_symbols()
     return symbol_cache
 
 @app.post("/auth/sync")
@@ -101,6 +96,19 @@ def get_user_strategies(email: str, db: Session = Depends(database.get_db)):
     user = crud.get_user_by_email(db, email)
     if not user: return []
     return user.strategies
+
+# --- THE MISSING TOGGLE ENDPOINT (RESTORED) ---
+@app.post("/strategies/{id}/toggle")
+def toggle_strategy(id: int, db: Session = Depends(database.get_db)):
+    strat = db.query(models.Strategy).filter(models.Strategy.id == id).first()
+    if not strat: raise HTTPException(status_code=404, detail="Not Found")
+    
+    strat.is_running = not strat.is_running
+    db.commit()
+    
+    status = "RUNNING" if strat.is_running else "PAUSED"
+    return {"status": status, "is_running": strat.is_running}
+# ----------------------------------------------
 
 @app.delete("/strategies/{id}")
 def delete_strategy(id: int, db: Session = Depends(database.get_db)):
