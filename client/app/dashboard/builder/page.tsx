@@ -20,6 +20,7 @@ function BuilderContent() {
   const [quantity, setQuantity] = useState(1);
   const [stopLoss, setStopLoss] = useState(1.0);
   const [takeProfit, setTakeProfit] = useState(2.0);
+  
   const [conditions, setConditions] = useState([{ id: 1, left: { type: 'rsi', params: { length: 14 } }, operator: 'LESS_THAN', right: { type: 'number', params: { value: 30 } } }]);
   const [backtestLoading, setBacktestLoading] = useState(false);
   const [backtestResult, setBacktestResult] = useState<any>(null);
@@ -94,11 +95,9 @@ function BuilderContent() {
       catch { return "-"; }
   };
 
-  // Safe Price Formatter (Prevents Empty Cells)
   const formatPrice = (p: any) => {
-      const num = Number(p);
-      if (isNaN(num) || p === undefined || p === null) return "0.00";
-      return num.toFixed(2);
+      if (p === undefined || p === null) return "0.00";
+      return Number(p).toFixed(2);
   };
 
   return (
@@ -121,15 +120,6 @@ function BuilderContent() {
                         <div className="bg-slate-900 p-5 rounded-2xl border border-slate-700"><div className="text-slate-500 text-xs uppercase mb-1 flex items-center gap-1"><TrendingUp size={12}/> Win Rate</div><div className="text-3xl font-bold text-blue-400">{backtestResult.metrics.win_rate}%</div></div>
                         <div className="bg-slate-900 p-5 rounded-2xl border border-slate-700"><div className="text-slate-500 text-xs uppercase mb-1 flex items-center gap-1"><List size={12}/> Trades</div><div className="text-3xl font-bold text-white">{backtestResult.metrics.total_trades}</div></div>
                     </div>
-
-                    {backtestResult.metrics.audit && (
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                            <div className="bg-slate-900 p-4 rounded-xl border border-slate-800"><div className="text-slate-500 text-[10px] uppercase">Max Drawdown</div><div className="text-lg font-bold text-red-400">{backtestResult.metrics.audit.max_drawdown}%</div></div>
-                            <div className="bg-slate-900 p-4 rounded-xl border border-slate-800"><div className="text-slate-500 text-[10px] uppercase">Sharpe Ratio</div><div className="text-lg font-bold text-white">{backtestResult.metrics.audit.sharpe_ratio}</div></div>
-                            <div className="bg-slate-900 p-4 rounded-xl border border-slate-800"><div className="text-slate-500 text-[10px] uppercase">Profit Factor</div><div className="text-lg font-bold text-emerald-400">{backtestResult.metrics.audit.profit_factor}</div></div>
-                            <div className="bg-slate-900 p-4 rounded-xl border border-slate-800"><div className="text-slate-500 text-[10px] uppercase">Expectancy</div><div className="text-lg font-bold text-white"></div></div>
-                        </div>
-                    )}
 
                     <div className="h-80 w-full bg-slate-900 rounded-2xl border border-slate-700 p-4"><ResponsiveContainer width="100%" height="100%"><LineChart data={backtestResult.equity}><CartesianGrid strokeDasharray="3 3" stroke="#334155" /><XAxis dataKey="time" hide /><YAxis domain={['auto', 'auto']} stroke="#94a3b8" fontSize={10} /><Tooltip contentStyle={{backgroundColor: '#0f172a', border: '1px solid #334155'}} /><Legend /><Line name="Strategy" type="monotone" dataKey="balance" stroke="#3b82f6" strokeWidth={2} dot={false} /><Line name="Buy & Hold" type="monotone" dataKey="buy_hold" stroke="#eab308" strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer></div>
 
