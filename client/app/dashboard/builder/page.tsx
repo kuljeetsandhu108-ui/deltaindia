@@ -2,7 +2,7 @@
 
 import { useState, useEffect, Suspense } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowLeft, Play, Plus, Trash2, Zap, AlertTriangle, Search, Settings2, Save, BarChart2, Clock, List, TrendingUp, Activity, DollarSign } from 'lucide-react';
+import { ArrowLeft, Play, Plus, Trash2, Zap, AlertTriangle, Search, Settings2, Save, BarChart2, Clock, List, TrendingUp, Activity, DollarSign, Globe } from 'lucide-react';
 import Link from 'next/link';
 import { useSession } from 'next-auth/react';
 import { INDICATORS } from '@/lib/indicators';
@@ -15,9 +15,10 @@ function BuilderContent() {
   const router = useRouter();
   const editId = searchParams.get('edit'); 
 
-  // --- FIXED: ALL VARIABLE NAMES INCLUDED ---
+  // STATE VARIABLES
   const [strategyName, setStrategyName] = useState("My Pro Algo");
-  const [symbol, setSymbol] = useState("BTCUSD");
+  const [broker, setBroker] = useState("DELTA"); // NEW: Broker State
+  const [symbol, setSymbol] = useState("");
   const [timeframe, setTimeframe] = useState("1h");
   const [quantity, setQuantity] = useState(1);
   const [stopLoss, setStopLoss] = useState(1.0);
@@ -32,25 +33,28 @@ function BuilderContent() {
   const [backtestLoading, setBacktestLoading] = useState(false);
   const [backtestResult, setBacktestResult] = useState<any>(null);
 
-  // FETCH LIVE SYMBOLS
+  // FETCH LIVE SYMBOLS (Triggered when Broker changes)
   useEffect(() => {
     const fetchSymbols = async () => {
         try {
+            setSymbolList([]); // Clear list while loading
             const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-            const res = await fetch(apiUrl + '/data/symbols');
+            // DYNAMIC FETCH BASED ON BROKER
+            const res = await fetch(`${apiUrl}/data/symbols?broker=${broker}`);
             if (res.ok) {
                 const data = await res.json();
                 if (data && data.length > 0) {
                     setSymbolList(data);
+                    // Only reset symbol if not editing or if current symbol invalid
                     if (!editId) setSymbol(data[0]); 
                 }
             }
         } catch(e) { console.error("Could not fetch symbols", e); }
     };
     fetchSymbols();
-  }, []);
+  }, [broker]); // Re-run when broker changes
 
-  // FETCH EXISTING STRATEGY IF EDITING
+  // LOAD EXISTING STRATEGY
   useEffect(() => {
     if (editId && session?.user?.email) {
         const fetchDetails = async () => {
@@ -60,6 +64,7 @@ function BuilderContent() {
                 if(res.ok) {
                     const data = await res.json();
                     setStrategyName(data.name); 
+                    setBroker(data.broker || "DELTA"); // Load Broker
                     setSymbol(data.symbol);
                     
                     const logic = data.logic_configuration || {};
@@ -121,6 +126,7 @@ function BuilderContent() {
       email: session.user.email, 
       name: strategyName, 
       symbol, 
+      broker, // Send Broker
       logic: { conditions, timeframe, quantity: Number(quantity), sl: Number(stopLoss), tp: Number(takeProfit) } 
     };
     try {
@@ -148,6 +154,7 @@ function BuilderContent() {
       email: session?.user?.email || "test", 
       name: strategyName, 
       symbol, 
+      broker, // Send Broker to Backtester
       logic: { conditions, timeframe, quantity: Number(quantity), sl: Number(stopLoss), tp: Number(takeProfit) } 
     };
     try {
@@ -216,10 +223,20 @@ function BuilderContent() {
                   <label className="block text-sm text-slate-400 mb-1">Name</label>
                   <input type="text" value={strategyName} onChange={(e) => setStrategyName(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded p-2 outline-none focus:border-cyan-500" />
                 </div>
+
+                {/* BROKER SELECTOR */}
                 <div>
-                    <label className="block text-sm text-slate-400 mb-1">Pair</label>
+                    <label className="block text-sm text-slate-400 mb-1 flex items-center gap-2"><Globe size={12}/> Broker</label>
+                    <select value={broker} onChange={(e) => setBroker(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded p-2 outline-none font-bold text-yellow-500">
+                        <option value="DELTA">Delta Exchange</option>
+                        <option value="COINDCX">CoinDCX</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label className="block text-sm text-slate-400 mb-1">Pair ({symbolList.length})</label>
                     <select value={symbol} onChange={(e) => setSymbol(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded p-2 outline-none">
-                        {symbolList.length > 0 ? symbolList.map(s => (<option key={s} value={s}>{s}</option>)) : <option value="BTCUSD">BTC/USD</option>}
+                        {symbolList.length > 0 ? symbolList.map(s => (<option key={s} value={s}>{s}</option>)) : <option value="BTCUSD">Loading...</option>}
                     </select>
                 </div>
                 <div>
