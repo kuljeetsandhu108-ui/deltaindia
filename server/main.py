@@ -8,26 +8,42 @@ from contextlib import asynccontextmanager
 from app import models, database, schemas, crud
 from app.engine import engine as trading_engine
 from app.backtester import backtester
+from app.brokers.coindcx import coindcx_manager
 import ccxt.async_support as ccxt
 
-DEFAULT_SYMBOLS = ["BTC-USDT", "ETH-USDT", "XRP-USDT", "SOL-USDT"]
-symbol_cache = DEFAULT_SYMBOLS
+# --- SEPARATED DUAL CACHE ---
+symbol_cache = {
+    "DELTA": ["BTC-USDT", "ETH-USDT", "SOL-USDT"],
+    "COINDCX": ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
+}
 
-async def refresh_symbols():
+async def refresh_delta_symbols():
     global symbol_cache
     exchange = None
     try:
         exchange = ccxt.delta({'options': {'defaultType': 'future'}, 'urls': {'api': {'public': 'https://api.india.delta.exchange', 'private': 'https://api.india.delta.exchange'}, 'www': 'https://india.delta.exchange'}})
         markets = await exchange.load_markets()
-        live_symbols = [m['id'] for k, m in markets.items() if m.get('active') and ('USDT' in m.get('id', '') or 'USD' in m.get('id', ''))]
-        if live_symbols: symbol_cache = sorted(list(set(live_symbols)))
-    except Exception as e: print(f"Symbol Fetch Error: {e}")
+        live_symbols = [m.get('id', k) for k, m in markets.items() if m.get('active') and ('USDT' in m.get('id', '') or 'USD' in m.get('id', ''))]
+        if live_symbols: 
+            symbol_cache["DELTA"] = sorted(list(set(live_symbols)))
+            print(f"✅ Loaded Delta Pairs")
+    except Exception as e: print(f"Delta Fetch Error: {e}")
     finally:
         if exchange: await exchange.close()
 
+async def refresh_coindcx_symbols():
+    global symbol_cache
+    try:
+        syms = await coindcx_manager.fetch_symbols()
+        if syms and len(syms) > 0:
+            symbol_cache["COINDCX"] = syms
+    except Exception as e: print(f"CoinDCX Fetch Error: {e}")
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    asyncio.create_task(refresh_symbols())
+    # Load BOTH worlds on startup
+    asyncio.create_task(refresh_delta_symbols())
+    asyncio.create_task(refresh_coindcx_symbols())
     asyncio.create_task(trading_engine.start())
     yield
     trading_engine.is_running = False
@@ -37,29 +53,33 @@ app = FastAPI(title="AlgoTradeIndia Engine", lifespan=lifespan)
 
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-# ⚡ GLOBAL CRASH CATCHER: Never throw a CORS error again
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     print(f"🔥 FATAL ERROR: {traceback.format_exc()}")
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "Internal Server Error", "error": str(exc)},
-        headers={"Access-Control-Allow-Origin": "*"}
-    )
+    return JSONResponse(status_code=500, content={"detail": "Internal Server Error"}, headers={"Access-Control-Allow-Origin": "*"})
 
 @app.get("/")
-def home(): return {"status": "System Online", "symbols": len(symbol_cache)}
+def home(): return {"status": "System Online", "delta": len(symbol_cache["DELTA"]), "coindcx": len(symbol_cache["COINDCX"])}
 
+# --- THE FIX: SMART SYMBOL ROUTER ---
 @app.get("/data/symbols")
-async def get_symbols():
-    if len(symbol_cache) <= 4: await refresh_symbols()
-    return symbol_cache
+async def get_symbols(broker: str = "DELTA"):
+    b = broker.upper()
+    if b not in symbol_cache: b = "DELTA"
+    
+    # Lazy load if empty
+    if len(symbol_cache[b]) <= 4:
+        if b == "DELTA": await refresh_delta_symbols()
+        elif b == "COINDCX": await refresh_coindcx_symbols()
+        
+    return symbol_cache[b]
+# ------------------------------------
 
 @app.post("/auth/sync")
 def sync_user(user: schemas.UserCreate, db: Session = Depends(database.get_db)):
     db_user = crud.get_user_by_email(db, email=user.email)
     if not db_user: return crud.create_user(db=db, user=user)
-    return {"status": "User exists"}
+    return {"status": "User exists", "id": db_user.id}
 
 @app.post("/user/keys")
 def save_keys(keys: schemas.BrokerKeys, db: Session = Depends(database.get_db)):
@@ -112,6 +132,12 @@ def update_strategy(id: int, strat: schemas.StrategyInput, db: Session = Depends
 
 @app.post("/strategy/backtest")
 async def run_backtest(strat: schemas.StrategyInput):
-    df = await backtester.fetch_historical_data(strat.symbol, strat.logic.get('timeframe', '1h'), limit=3000)
-    if df.empty: return {"error": f"No data for {strat.symbol}"}
+    tf = strat.logic.get('timeframe', '1h')
+    # Route history fetch to proper broker
+    if strat.broker.upper() == "COINDCX":
+        df = await coindcx_manager.fetch_history(strat.symbol, tf, limit=3000)
+    else:
+        df = await backtester.fetch_historical_data(strat.symbol, tf, limit=3000)
+        
+    if df.empty: return {"error": f"No data for {strat.symbol} on {strat.broker}"}
     return backtester.run_simulation(df, strat.logic)
