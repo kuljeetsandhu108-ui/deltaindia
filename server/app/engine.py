@@ -90,29 +90,42 @@ class RealTimeEngine:
                 if op == 'EQUALS' and not (v_l == v_r): return False
 
             return True
-        except: return False
+        except Exception as e: 
+            print(f"Logic Eval Error: {e}")
+            return False
 
-    async def execute_trade(self, db: Session, symbol: str, current_price: float, broker: str):
-        strategies = db.query(models.Strategy).filter(models.Strategy.is_running == True, models.Strategy.symbol == symbol, models.Strategy.broker == broker).all()
-        if not strategies: return
-
+    async def execute_trade(self, db: Session, symbol: str, broker: str):
+        # 1. Fetch data directly inside this function to ensure price is accurate
         df = await self.fetch_history(symbol, broker)
         if df is None or df.empty: return
 
+        # Extract precise float price from dataframe
+        current_price = float(df.iloc[-1]['close'])
+
+        strategies = db.query(models.Strategy).filter(
+            models.Strategy.is_running == True, 
+            models.Strategy.symbol == symbol,
+            models.Strategy.broker == broker
+        ).all()
+
         for strat in strategies:
-            # We ONLY execute the block below if the entry logic is TRUE. No spam.
+            crud.create_log(db, strat.id, f"📡 System Check: {symbol} @ ${current_price:.2f}", "INFO")
+
             if self.check_conditions(df, strat.logic_configuration):
                 user = strat.owner
-                
                 api_key_enc = user.coindcx_api_key if broker == "COINDCX" else user.delta_api_key
                 secret_enc = user.coindcx_api_secret if broker == "COINDCX" else user.delta_api_secret
 
                 if not api_key_enc:
-                    crud.create_log(db, strat.id, f"❌ No API Keys saved for {broker}. Go to Settings.", "ERROR")
+                    crud.create_log(db, strat.id, f"❌ No API Keys saved for {broker}.", "ERROR")
                     continue
 
                 logic = strat.logic_configuration
                 qty = float(logic.get('quantity', 1))
+                
+                params = {}
+                if logic.get('sl', 0) > 0: params['stop_loss_price'] = current_price * (1 - (logic['sl']/100))
+                if logic.get('tp', 0) > 0: params['take_profit_price'] = current_price * (1 + (logic['tp']/100))
 
                 try:
                     api_key = security.decrypt_value(api_key_enc)
@@ -121,31 +134,42 @@ class RealTimeEngine:
                     # --- DELTA EXCHANGE EXECUTION ---
                     if broker == "DELTA":
                         exchange = ccxt.delta({'apiKey': api_key, 'secret': secret, 'options': { 'defaultType': 'future', 'adjustForTimeDifference': True }, 'urls': { 'api': {'public': 'https://api.india.delta.exchange', 'private': 'https://api.india.delta.exchange'}, 'www': 'https://india.delta.exchange' }})
-                        params = {}
-                        if logic.get('sl', 0) > 0: params['stop_loss_price'] = current_price * (1 - (logic['sl']/100))
-                        if logic.get('tp', 0) > 0: params['take_profit_price'] = current_price * (1 + (logic['tp']/100))
+                        crud.create_log(db, strat.id, f"🚀 Firing Order on DELTA: Buy {qty} {symbol}", "INFO")
                         
-                        crud.create_log(db, strat.id, f"🚀 Signal Met! Firing Order on DELTA: Buy {qty} {symbol}", "INFO")
-                        order = await exchange.create_order(symbol, 'market', 'buy', qty, params=params)
-                        crud.create_log(db, strat.id, f"✅ Order Filled! ID: {order.get('id')}", "SUCCESS")
-                        await exchange.close()
+                        try:
+                            order = await exchange.create_order(symbol, 'market', 'buy', qty, params=params)
+                            crud.create_log(db, strat.id, f"✅ Order Filled! ID: {order.get('id')}", "SUCCESS")
+                        except ccxt.InsufficientFunds:
+                            crud.create_log(db, strat.id, f"⚠️ Insufficient Margin.", "WARNING")
+                        except ccxt.AuthenticationError:
+                            crud.create_log(db, strat.id, f"❌ Invalid API Keys.", "ERROR")
+                        except Exception as e:
+                            crud.create_log(db, strat.id, f"❌ Order Error: {str(e)[:80]}", "ERROR")
+                        finally:
+                            await exchange.close()
                     
                     # --- COINDCX DIRECT API EXECUTION ---
                     elif broker == "COINDCX":
-                        crud.create_log(db, strat.id, f"🚀 Signal Met! Firing Order on COINDCX: Buy {qty} {symbol}", "INFO")
+                        # Auto-Format Symbol for CoinDCX Futures
+                        cdcx_sym = symbol
+                        clean_sym = symbol.replace("/", "").replace("-", "")
+                        if clean_sym.endswith("USDT") and not clean_sym.startswith("B-"):
+                            base = clean_sym[:-4]
+                            cdcx_sym = f"B-{base}_USDT"
+
+                        crud.create_log(db, strat.id, f"🚀 Firing Order on COINDCX: Buy {qty} {cdcx_sym}", "INFO")
                         
                         url = "https://api.coindcx.com/exchange/v1/derivatives/futures/orders/create"
                         timestamp = int(time.time() * 1000)
                         
                         payload = {
-                            "market": symbol,
+                            "market": cdcx_sym,
                             "side": "buy",
                             "order_type": "market_order",
                             "total_quantity": qty,
                             "timestamp": timestamp
                         }
                         
-                        # Generate HMAC Signature required by CoinDCX
                         json_payload = json.dumps(payload, separators=(',', ':'))
                         signature = hmac.new(bytes(secret, 'utf-8'), bytes(json_payload, 'utf-8'), hashlib.sha256).hexdigest()
                         
@@ -155,7 +179,6 @@ class RealTimeEngine:
                             'X-AUTH-SIGNATURE': signature
                         }
                         
-                        # Async execution of the HTTP Post
                         response = await asyncio.to_thread(requests.post, url, data=json_payload, headers=headers)
                         res_data = response.json()
                         
@@ -163,17 +186,13 @@ class RealTimeEngine:
                             crud.create_log(db, strat.id, f"✅ Order Filled! ID: {res_data.get('id', 'Confirmed')}", "SUCCESS")
                         else:
                             err_msg = res_data.get('message', str(res_data))
-                            if "margin" in err_msg.lower() or "balance" in err_msg.lower():
+                            if "margin" in err_msg.lower() or "balance" in err_msg.lower() or "insufficient" in err_msg.lower():
                                 crud.create_log(db, strat.id, f"⚠️ Insufficient Margin: {err_msg}", "WARNING")
                             else:
                                 crud.create_log(db, strat.id, f"❌ Order Failed: {err_msg}", "ERROR")
 
-                except ccxt.InsufficientFunds:
-                    crud.create_log(db, strat.id, f"⚠️ Insufficient Margin on Delta.", "WARNING")
-                except ccxt.AuthenticationError:
-                    crud.create_log(db, strat.id, f"❌ Invalid API Keys for {broker}", "ERROR")
                 except Exception as e:
-                    crud.create_log(db, strat.id, f"❌ Execution Error: {str(e)[:50]}", "ERROR")
+                    crud.create_log(db, strat.id, f"❌ Engine Error: {str(e)[:50]}", "ERROR")
 
     # --- CORE 1: DELTA ---
     async def run_delta_loop(self):
@@ -196,7 +215,7 @@ class RealTimeEngine:
                         if data.get('type') == 'v2/ticker':
                             try:
                                 db_tick = database.SessionLocal()
-                                await self.execute_trade(db_tick, data['symbol'], float(data['mark_price']), "DELTA")
+                                await self.execute_trade(db_tick, data['symbol'], "DELTA")
                                 db_tick.close()
                             except: pass
             except: await asyncio.sleep(5)
@@ -210,24 +229,18 @@ class RealTimeEngine:
                 symbols = await self.get_active_symbols(db, "COINDCX")
                 
                 for sym in symbols:
-                    try:
-                        # Fetch recent history to get current price and evaluate logic
-                        df = await coindcx_manager.fetch_history(sym, '1m', 5)
-                        if not df.empty:
-                            current_price = df.iloc[-1]['close']
-                            await self.execute_trade(db, sym, current_price, "COINDCX")
-                    except Exception as e:
-                        print(f"CoinDCX Engine Error: {e}")
+                    # We pass just the symbol and broker. The execute_trade func will fetch the exact price.
+                    await self.execute_trade(db, sym, "COINDCX")
                 
                 db.close()
             except: pass
             
-            # Check every 10 seconds for CoinDCX
-            await asyncio.sleep(10) 
+            # Check CoinDCX every 15 seconds to obey API limits
+            await asyncio.sleep(15) 
 
     async def start(self):
         self.is_running = True
-        print("✅ SILENT DUAL-CORE ENGINE STARTED")
+        print("✅ DUAL-CORE ENGINE STARTED")
         await asyncio.gather(self.run_delta_loop(), self.run_coindcx_loop())
 
 engine = RealTimeEngine()
