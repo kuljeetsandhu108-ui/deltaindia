@@ -6,13 +6,19 @@ import pandas as pd
 import numpy as np
 from sqlalchemy.orm import Session
 from . import models, database, security, crud
+import traceback
 
 class RealTimeEngine:
     def __init__(self):
         self.is_running = False
         self.delta_ws_url = "wss://socket.india.delta.exchange"
 
-    async def fetch_history(self, symbol, broker="DELTA"):
+    async def get_active_symbols(self, db: Session):
+        strategies = db.query(models.Strategy).filter(models.Strategy.is_running == True).all()
+        symbols = list(set([s.symbol for s in strategies]))
+        return symbols if symbols else ["BTC-USDT"]
+
+    async def fetch_history(self, symbol, broker="DELTA", db=None, strat_ids=[]):
         exchange = None
         try:
             if broker == "COINDCX":
@@ -20,13 +26,22 @@ class RealTimeEngine:
             else:
                 exchange = ccxt.delta({'options': {'defaultType': 'future'}, 'urls': { 'api': {'public': 'https://api.india.delta.exchange', 'private': 'https://api.india.delta.exchange'}, 'www': 'https://india.delta.exchange'}})
                 
+            # CoinDCX requires strict timeframes. 1m is safe.
             ohlcv = await exchange.fetch_ohlcv(symbol, timeframe='1m', limit=100)
-            if not ohlcv: return pd.DataFrame()
+            if not ohlcv: 
+                if db:
+                    for sid in strat_ids: crud.create_log(db, sid, f"❌ {broker} returned no history for {symbol}.", "ERROR")
+                return pd.DataFrame()
+                
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             cols = ['open', 'high', 'low', 'close', 'volume']
             df[cols] = df[cols].apply(pd.to_numeric, errors='coerce')
             return df.dropna()
-        except: return None
+            
+        except Exception as e:
+            if db:
+                for sid in strat_ids: crud.create_log(db, sid, f"❌ History Fetch Error ({broker}): {str(e)}", "ERROR")
+            return None
         finally: 
             if exchange: await exchange.close()
 
@@ -41,12 +56,6 @@ class RealTimeEngine:
                 return 100 - (100 / (1 + rs))
             elif name == 'ema': return df['close'].ewm(span=length, adjust=False).mean()
             elif name == 'sma': return df['close'].rolling(window=length).mean()
-            elif name == 'bb_upper':
-                std = float(params.get('std') or 2.0)
-                return df['close'].rolling(window=length).mean() + (df['close'].rolling(window=length).std() * std)
-            elif name == 'bb_lower':
-                std = float(params.get('std') or 2.0)
-                return df['close'].rolling(window=length).mean() - (df['close'].rolling(window=length).std() * std)
             return pd.Series(0, index=df.index)
         except: return pd.Series(0, index=df.index)
 
@@ -86,21 +95,25 @@ class RealTimeEngine:
         except: return False
 
     async def execute_trade(self, db: Session, symbol: str, current_price: float, broker: str):
-        # ISOLATION: Only get strategies for THIS specific broker
         strategies = db.query(models.Strategy).filter(
             models.Strategy.is_running == True, 
             models.Strategy.symbol == symbol,
             models.Strategy.broker == broker
         ).all()
+        
+        strat_ids = [s.id for s in strategies]
+        if not strategies: return
+
+        df = await self.fetch_history(symbol, broker, db, strat_ids)
+        if df is None or df.empty: return
 
         for strat in strategies:
-            df = await self.fetch_history(symbol, broker)
-            if df is None or df.empty: continue
+            # We add a heartbeat log so you know it's alive!
+            crud.create_log(db, strat.id, f"📡 Ping: {symbol} @  | Checking logic...", "INFO")
 
             if self.check_conditions(df, strat.logic_configuration):
                 user = strat.owner
                 
-                # Fetch Correct Keys
                 api_key_enc = user.coindcx_api_key if broker == "COINDCX" else user.delta_api_key
                 secret_enc = user.coindcx_api_secret if broker == "COINDCX" else user.delta_api_secret
 
@@ -111,8 +124,6 @@ class RealTimeEngine:
                 logic = strat.logic_configuration
                 qty = float(logic.get('quantity', 1))
                 params = {}
-                if logic.get('sl', 0) > 0: params['stopLossPrice'] = current_price * (1 - (logic['sl']/100))
-                if logic.get('tp', 0) > 0: params['takeProfitPrice'] = current_price * (1 + (logic['tp']/100))
 
                 exchange = None
                 try:
@@ -129,11 +140,11 @@ class RealTimeEngine:
                     crud.create_log(db, strat.id, f"✅ Order Filled! ID: {order.get('id', 'Confirmed')}", "SUCCESS")
 
                 except ccxt.InsufficientFunds:
-                    crud.create_log(db, strat.id, f"⚠️ Insufficient Margin to buy {qty} {symbol}. Trade skipped.", "WARNING")
+                    crud.create_log(db, strat.id, f"⚠️ Insufficient Margin to buy {qty} {symbol}.", "WARNING")
                 except ccxt.AuthenticationError:
                     crud.create_log(db, strat.id, f"❌ Invalid API Keys for {broker}", "ERROR")
                 except Exception as e:
-                    crud.create_log(db, strat.id, f"❌ Trade Error: {str(e)[:80]}...", "ERROR")
+                    crud.create_log(db, strat.id, f"❌ Trade Error: {str(e)[:100]}...", "ERROR")
                 finally:
                     if exchange: await exchange.close()
 
@@ -143,7 +154,6 @@ class RealTimeEngine:
         while self.is_running:
             try:
                 db = database.SessionLocal()
-                # Get Delta symbols only
                 strats = db.query(models.Strategy).filter(models.Strategy.is_running == True, models.Strategy.broker == "DELTA").all()
                 symbols = list(set([s.symbol for s in strats]))
                 db.close()
@@ -178,24 +188,30 @@ class RealTimeEngine:
                 
                 for sym in symbols:
                     try:
+                        # 1. Fetch current price
                         ticker = await exchange.fetch_ticker(sym)
                         current_price = float(ticker['last'])
+                        
+                        # 2. Execute logic
                         await self.execute_trade(db, sym, current_price, "COINDCX")
-                    except: pass
+                        
+                    except Exception as e:
+                        # If fetching ticker fails, tell the user!
+                        for s in [st for st in strats if st.symbol == sym]:
+                            crud.create_log(db, s.id, f"❌ CoinDCX Connection Error for {sym}: {str(e)[:60]}", "ERROR")
                 
                 db.close()
             except Exception as e:
                 pass
             
-            # Polling speed for CoinDCX (Checks every 10 seconds)
-            await asyncio.sleep(10) 
+            # Check every 15 seconds to avoid rate limits
+            await asyncio.sleep(15) 
             
         await exchange.close()
 
     async def start(self):
         self.is_running = True
-        print("✅ DUAL-CORE ENGINE STARTED (DELTA + COINDCX)")
-        # Run both worlds simultaneously
+        print("✅ DUAL-CORE ENGINE STARTED")
         await asyncio.gather(
             self.run_delta_loop(),
             self.run_coindcx_loop()
