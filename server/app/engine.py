@@ -100,16 +100,15 @@ class RealTimeEngine:
         if df is None or df.empty: return
 
         for strat in strategies:
-            # 📡 Ping to terminal so user knows the engine is actively monitoring this strategy
-            crud.create_log(db, strat.id, f"📡 System Check: {symbol} @ ", "INFO")
-
+            # We ONLY execute the block below if the entry logic is TRUE. No spam.
             if self.check_conditions(df, strat.logic_configuration):
                 user = strat.owner
+                
                 api_key_enc = user.coindcx_api_key if broker == "COINDCX" else user.delta_api_key
                 secret_enc = user.coindcx_api_secret if broker == "COINDCX" else user.delta_api_secret
 
                 if not api_key_enc:
-                    crud.create_log(db, strat.id, f"❌ No API Keys saved for {broker}.", "ERROR")
+                    crud.create_log(db, strat.id, f"❌ No API Keys saved for {broker}. Go to Settings.", "ERROR")
                     continue
 
                 logic = strat.logic_configuration
@@ -126,14 +125,14 @@ class RealTimeEngine:
                         if logic.get('sl', 0) > 0: params['stop_loss_price'] = current_price * (1 - (logic['sl']/100))
                         if logic.get('tp', 0) > 0: params['take_profit_price'] = current_price * (1 + (logic['tp']/100))
                         
-                        crud.create_log(db, strat.id, f"🚀 Firing Order on DELTA: Buy {qty} {symbol}", "INFO")
+                        crud.create_log(db, strat.id, f"🚀 Signal Met! Firing Order on DELTA: Buy {qty} {symbol}", "INFO")
                         order = await exchange.create_order(symbol, 'market', 'buy', qty, params=params)
                         crud.create_log(db, strat.id, f"✅ Order Filled! ID: {order.get('id')}", "SUCCESS")
                         await exchange.close()
                     
-                    # --- COINDCX DIRECT API EXECUTION (Bypassing CCXT) ---
+                    # --- COINDCX DIRECT API EXECUTION ---
                     elif broker == "COINDCX":
-                        crud.create_log(db, strat.id, f"🚀 Firing Order on COINDCX: Buy {qty} {symbol}", "INFO")
+                        crud.create_log(db, strat.id, f"🚀 Signal Met! Firing Order on COINDCX: Buy {qty} {symbol}", "INFO")
                         
                         url = "https://api.coindcx.com/exchange/v1/derivatives/futures/orders/create"
                         timestamp = int(time.time() * 1000)
@@ -146,7 +145,7 @@ class RealTimeEngine:
                             "timestamp": timestamp
                         }
                         
-                        # Generate HMAC SHA256 Signature for CoinDCX
+                        # Generate HMAC Signature required by CoinDCX
                         json_payload = json.dumps(payload, separators=(',', ':'))
                         signature = hmac.new(bytes(secret, 'utf-8'), bytes(json_payload, 'utf-8'), hashlib.sha256).hexdigest()
                         
@@ -156,6 +155,7 @@ class RealTimeEngine:
                             'X-AUTH-SIGNATURE': signature
                         }
                         
+                        # Async execution of the HTTP Post
                         response = await asyncio.to_thread(requests.post, url, data=json_payload, headers=headers)
                         res_data = response.json()
                         
@@ -209,9 +209,9 @@ class RealTimeEngine:
                 db = database.SessionLocal()
                 symbols = await self.get_active_symbols(db, "COINDCX")
                 
-                # Fetch recent history to get current price and evaluate logic
                 for sym in symbols:
                     try:
+                        # Fetch recent history to get current price and evaluate logic
                         df = await coindcx_manager.fetch_history(sym, '1m', 5)
                         if not df.empty:
                             current_price = df.iloc[-1]['close']
@@ -222,12 +222,12 @@ class RealTimeEngine:
                 db.close()
             except: pass
             
-            # Run this loop every 15 seconds so we don't hit CoinDCX rate limits
-            await asyncio.sleep(15)
+            # Check every 10 seconds for CoinDCX
+            await asyncio.sleep(10) 
 
     async def start(self):
         self.is_running = True
-        print("✅ DUAL-CORE ENGINE STARTED")
+        print("✅ SILENT DUAL-CORE ENGINE STARTED")
         await asyncio.gather(self.run_delta_loop(), self.run_coindcx_loop())
 
 engine = RealTimeEngine()
