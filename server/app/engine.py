@@ -31,14 +31,21 @@ class RealTimeEngine:
             if broker == "COINDCX":
                 return await coindcx_manager.fetch_history(symbol, timeframe='1m', limit=100)
             else:
+                # Need to use standard CCXT for Delta India History
                 exchange = ccxt.delta({'options': {'defaultType': 'future'}, 'urls': { 'api': {'public': 'https://api.india.delta.exchange', 'private': 'https://api.india.delta.exchange'}, 'www': 'https://india.delta.exchange'}})
-                ohlcv = await exchange.fetch_ohlcv(symbol, timeframe='1m', limit=100)
+                
+                # Auto-Format for Delta (Often requires BTCUSD instead of BTC-USDT for history)
+                hist_symbol = symbol.replace('-', '') if 'USDT' not in symbol else symbol
+                
+                ohlcv = await exchange.fetch_ohlcv(hist_symbol, timeframe='1m', limit=100)
                 if not ohlcv: return pd.DataFrame()
                 df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
                 cols = ['open', 'high', 'low', 'close', 'volume']
                 df[cols] = df[cols].apply(pd.to_numeric, errors='coerce')
                 return df.dropna()
-        except: return None
+        except Exception as e: 
+            print(f"History fetch error: {e}")
+            return None
         finally: 
             if exchange: await exchange.close()
 
@@ -56,9 +63,38 @@ class RealTimeEngine:
             return pd.Series(0, index=df.index)
         except: return pd.Series(0, index=df.index)
 
-    def check_conditions(self, df, logic):
+    async def check_conditions(self, symbol, broker, current_price, logic):
         try:
             conditions = logic.get('conditions', [])
+            
+            # --- FAST PATH: If logic is just Price vs Number, don't fetch history! ---
+            needs_history = False
+            for cond in conditions:
+                l_type = cond.get('left', {}).get('type')
+                r_type = cond.get('right', {}).get('type')
+                if l_type not in ['close', 'number'] or r_type not in ['close', 'number']:
+                    needs_history = True
+                    break
+
+            if not needs_history:
+                # Extremely fast check using the live WebSocket price
+                for cond in conditions:
+                    v_l = current_price if cond['left']['type'] == 'close' else float(cond['left']['params'].get('value', 0))
+                    v_r = current_price if cond['right']['type'] == 'close' else float(cond['right']['params'].get('value', 0))
+                    op = cond['operator']
+                    
+                    if op == 'GREATER_THAN' and not (v_l > v_r): return False
+                    if op == 'LESS_THAN' and not (v_l < v_r): return False
+                    if op == 'EQUALS' and not (v_l == v_r): return False
+                return True
+
+            # --- SLOW PATH: We need Indicators, so we fetch history ---
+            df = await self.fetch_history(symbol, broker)
+            if df is None or df.empty: return False
+
+            # Ensure the current live price is the absolute last close
+            df.loc[df.index[-1], 'close'] = current_price
+
             for cond in conditions:
                 for side in ['left', 'right']:
                     item = cond.get(side)
@@ -94,13 +130,9 @@ class RealTimeEngine:
             print(f"Logic Eval Error: {e}")
             return False
 
-    async def execute_trade(self, db: Session, symbol: str, broker: str):
-        # 1. Fetch data directly inside this function to ensure price is accurate
-        df = await self.fetch_history(symbol, broker)
-        if df is None or df.empty: return
-
-        # Extract precise float price from dataframe
-        current_price = float(df.iloc[-1]['close'])
+    async def execute_trade(self, db: Session, symbol: str, current_price: float, broker: str):
+        # We now PASS the live price down to the function
+        if current_price <= 0: return
 
         strategies = db.query(models.Strategy).filter(
             models.Strategy.is_running == True, 
@@ -109,9 +141,13 @@ class RealTimeEngine:
         ).all()
 
         for strat in strategies:
+            # PING TERMINAL
             crud.create_log(db, strat.id, f"📡 System Check: {symbol} @ ${current_price:.2f}", "INFO")
 
-            if self.check_conditions(df, strat.logic_configuration):
+            # Check logic asynchronously
+            is_trigger = await self.check_conditions(symbol, broker, current_price, strat.logic_configuration)
+
+            if is_trigger:
                 user = strat.owner
                 api_key_enc = user.coindcx_api_key if broker == "COINDCX" else user.delta_api_key
                 secret_enc = user.coindcx_api_secret if broker == "COINDCX" else user.delta_api_secret
@@ -131,7 +167,6 @@ class RealTimeEngine:
                     api_key = security.decrypt_value(api_key_enc)
                     secret = security.decrypt_value(secret_enc)
                     
-                    # --- DELTA EXCHANGE EXECUTION ---
                     if broker == "DELTA":
                         exchange = ccxt.delta({'apiKey': api_key, 'secret': secret, 'options': { 'defaultType': 'future', 'adjustForTimeDifference': True }, 'urls': { 'api': {'public': 'https://api.india.delta.exchange', 'private': 'https://api.india.delta.exchange'}, 'www': 'https://india.delta.exchange' }})
                         crud.create_log(db, strat.id, f"🚀 Firing Order on DELTA: Buy {qty} {symbol}", "INFO")
@@ -148,9 +183,7 @@ class RealTimeEngine:
                         finally:
                             await exchange.close()
                     
-                    # --- COINDCX DIRECT API EXECUTION ---
                     elif broker == "COINDCX":
-                        # Auto-Format Symbol for CoinDCX Futures
                         cdcx_sym = symbol
                         clean_sym = symbol.replace("/", "").replace("-", "")
                         if clean_sym.endswith("USDT") and not clean_sym.startswith("B-"):
@@ -194,7 +227,6 @@ class RealTimeEngine:
                 except Exception as e:
                     crud.create_log(db, strat.id, f"❌ Engine Error: {str(e)[:50]}", "ERROR")
 
-    # --- CORE 1: DELTA ---
     async def run_delta_loop(self):
         print("🌐 Delta World Online.")
         while self.is_running:
@@ -212,15 +244,17 @@ class RealTimeEngine:
                     async for message in websocket:
                         if not self.is_running: break
                         data = json.loads(message)
-                        if data.get('type') == 'v2/ticker':
+                        # Ensure we get a valid mark_price
+                        if data.get('type') == 'v2/ticker' and 'mark_price' in data:
                             try:
-                                db_tick = database.SessionLocal()
-                                await self.execute_trade(db_tick, data['symbol'], "DELTA")
-                                db_tick.close()
+                                live_price = float(data['mark_price'])
+                                if live_price > 0:
+                                    db_tick = database.SessionLocal()
+                                    await self.execute_trade(db_tick, data['symbol'], live_price, "DELTA")
+                                    db_tick.close()
                             except: pass
             except: await asyncio.sleep(5)
 
-    # --- CORE 2: COINDCX ---
     async def run_coindcx_loop(self):
         print("🌐 CoinDCX World Online.")
         while self.is_running:
@@ -229,14 +263,18 @@ class RealTimeEngine:
                 symbols = await self.get_active_symbols(db, "COINDCX")
                 
                 for sym in symbols:
-                    # We pass just the symbol and broker. The execute_trade func will fetch the exact price.
-                    await self.execute_trade(db, sym, "COINDCX")
+                    # Fetching just 1 minute of data to get the absolute latest close price as the "tick"
+                    df = await coindcx_manager.fetch_history(sym, '1m', 2)
+                    if df is not None and not df.empty:
+                        current_price = float(df.iloc[-1]['close'])
+                        if current_price > 0:
+                            await self.execute_trade(db, sym, current_price, "COINDCX")
                 
                 db.close()
             except: pass
             
-            # Check CoinDCX every 15 seconds to obey API limits
-            await asyncio.sleep(15) 
+            # Polling speed
+            await asyncio.sleep(10) 
 
     async def start(self):
         self.is_running = True
