@@ -150,3 +150,10 @@ async def run_backtest(strat: schemas.StrategyInput):
         
     return backtester.run_simulation(df, strat.logic)
 # ----------------------------------------
+
+# --- DIAGNOSTICS ENDPOINT ---
+from app import diagnostics
+
+@app.get("/system/diagnostics")
+async def check_system_health():
+    return await diagnostics.run_full_diagnostics()
