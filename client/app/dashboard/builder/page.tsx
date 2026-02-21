@@ -15,7 +15,7 @@ function BuilderContent() {
   const router = useRouter();
   const editId = searchParams.get('edit'); 
 
-  // STATES
+  // --- STATE VARIABLES ---
   const [strategyName, setStrategyName] = useState("My Pro Algo");
   const [broker, setBroker] = useState("COINDCX");
   const [symbol, setSymbol] = useState("BTCUSDT");
@@ -23,6 +23,7 @@ function BuilderContent() {
   const [quantity, setQuantity] = useState(1);
   const [stopLoss, setStopLoss] = useState(1.0);
   const [takeProfit, setTakeProfit] = useState(2.0);
+  
   const [symbolList, setSymbolList] = useState<string[]>([]);
   
   const [conditions, setConditions] = useState<any[]>([
@@ -32,7 +33,7 @@ function BuilderContent() {
   const [backtestLoading, setBacktestLoading] = useState(false);
   const [backtestResult, setBacktestResult] = useState<any>(null);
 
-  // AI STATES
+  // --- AI STATE ---
   const [aiPrompt, setAiPrompt] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
 
@@ -50,12 +51,12 @@ function BuilderContent() {
                     if (!editId) setSymbol(data[0]); 
                 }
             }
-        } catch(e) {}
+        } catch(e) { console.error("Could not fetch symbols", e); }
     };
     fetchSymbols();
-  }, [broker, editId]); 
+  }, [broker, editId]);
 
-  // FETCH EXISTING STRATEGY
+  // FETCH EXISTING STRATEGY IF EDITING
   useEffect(() => {
     if (editId && session?.user?.email) {
         const fetchDetails = async () => {
@@ -65,14 +66,16 @@ function BuilderContent() {
                 if(res.ok) {
                     const data = await res.json();
                     setStrategyName(data.name); 
-                    setBroker(data.broker || "DELTA");
                     setSymbol(data.symbol);
+                    setBroker(data.broker || "DELTA");
+                    
                     const logic = data.logic_configuration || {};
                     setTimeframe(logic.timeframe || "1h"); 
                     setQuantity(logic.quantity || 1);
                     setStopLoss(logic.sl || 0); 
                     setTakeProfit(logic.tp || 0);
-                    const safeConditions = (logic.conditions || []).map((c: any) => ({
+                    
+                    const safeConditions = (logic.conditions ||[]).map((c: any) => ({
                         id: c.id || Math.random(),
                         left: c.left || { type: 'close', params: {} },
                         operator: c.operator || 'GREATER_THAN',
@@ -80,13 +83,13 @@ function BuilderContent() {
                     }));
                     if (safeConditions.length > 0) setConditions(safeConditions);
                 }
-            } catch (e) {}
+            } catch (e) { console.error(e); }
         };
         fetchDetails();
     }
   }, [editId, session]);
 
-  // --- 🌟 MAGIC AI GENERATOR FUNCTION 🌟 ---
+  // --- AI GENERATOR FUNCTION ---
   const handleAIGenerate = async () => {
     if (!aiPrompt) return;
     setIsGenerating(true);
@@ -102,15 +105,15 @@ function BuilderContent() {
         if (data.error) {
             alert("AI Error: " + data.error);
         } else {
-            // Apply AI generated data to the visual builder
-            setStrategyName(data.strategyName || "AI Generated Strategy");
+            // Apply AI Data
+            setStrategyName(data.strategyName || "AI Strategy");
             if (data.symbol) setSymbol(data.symbol);
             if (data.timeframe) setTimeframe(data.timeframe);
             if (data.quantity) setQuantity(data.quantity);
             if (data.sl !== undefined) setStopLoss(data.sl);
             if (data.tp !== undefined) setTakeProfit(data.tp);
+            if (data.broker) setBroker(data.broker); // AI can choose broker too
             
-            // Map AI conditions safely
             if (data.conditions && data.conditions.length > 0) {
                 const mappedConds = data.conditions.map((c: any, index: number) => ({
                     id: Date.now() + index,
@@ -120,7 +123,7 @@ function BuilderContent() {
                 }));
                 setConditions(mappedConds);
             }
-            setAiPrompt(""); // Clear prompt
+            setAiPrompt(""); 
         }
     } catch (e) {
         alert("Failed to communicate with AI.");
@@ -131,25 +134,30 @@ function BuilderContent() {
   const addCondition = () => { 
     setConditions([...conditions, { id: Date.now(), left: { type: 'rsi', params: { length: 14 } }, operator: 'LESS_THAN', right: { type: 'number', params: { value: 30 } } }]); 
   };
+  
   const removeCondition = (id: number) => { 
     setConditions(conditions.filter(c => c.id !== id)); 
   };
+
   const updateCondition = (id: number, side: 'left' | 'right', field: string, val: any) => { 
     setConditions(conditions.map(c => { 
         if (c.id !== id) return c; 
         if (field === 'type') { 
             const ind = INDICATORS.find(i => i.value === val); 
             const defaultParams: any = {}; 
-            if (ind && ind.params) { ind.params.forEach(p => { defaultParams[p.name] = p.def; }); }
+            if (ind && ind.params) {
+                ind.params.forEach(p => { defaultParams[p.name] = p.def; }); 
+            }
             return { ...c, [side]: { type: val, params: defaultParams } }; 
         } 
         return { ...c, [side]: { ...c[side], [field]: val } }; 
     })); 
   };
+
   const updateParam = (id: number, side: 'left' | 'right', paramName: string, val: any) => { 
     setConditions(conditions.map(c => { 
         if (c.id !== id) return c; 
-        const sideData: any = (side === 'left' ? c.left : c.right);
+        const sideData: any = side === 'left' ? c.left : c.right;
         const newSide = { ...sideData, params: { ...sideData.params, [paramName]: val } };
         return { ...c, [side]: newSide }; 
     })); 
@@ -157,26 +165,50 @@ function BuilderContent() {
 
   const handleDeploy = async () => {
     if (!session?.user?.email) return alert("Please login first");
-    const payload = { email: session.user.email, name: strategyName, symbol, broker, logic: { conditions, timeframe, quantity: Number(quantity), sl: Number(stopLoss), tp: Number(takeProfit) } };
+    const payload = { 
+      email: session.user.email, 
+      name: strategyName, 
+      symbol, 
+      broker,
+      logic: { conditions, timeframe, quantity: Number(quantity), sl: Number(stopLoss), tp: Number(takeProfit) } 
+    };
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
       let url = apiUrl + '/strategy/create'; 
       let method = 'POST';
-      if (editId) { url = apiUrl + '/strategy/' + editId; method = 'PUT'; }
+      if (editId) { 
+          url = apiUrl + '/strategy/' + editId; 
+          method = 'PUT'; 
+      }
       const res = await fetch(url, { method: method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      if(res.ok) { alert(editId ? "✅ STRATEGY UPDATED!" : "🚀 STRATEGY DEPLOYED!"); router.push('/dashboard'); } 
-      else { alert("Operation Failed"); }
+      if(res.ok) { 
+          alert(editId ? "✅ STRATEGY UPDATED!" : "🚀 STRATEGY DEPLOYED!"); 
+          router.push('/dashboard'); 
+      } else { 
+          alert("Operation Failed"); 
+      }
     } catch (e) { alert("Server Error."); }
   };
 
   const handleBacktest = async () => {
-    setBacktestLoading(true); setBacktestResult(null);
-    const payload = { email: session?.user?.email || "test", name: strategyName, symbol, broker, logic: { conditions, timeframe, quantity: Number(quantity), sl: Number(stopLoss), tp: Number(takeProfit) } };
+    setBacktestLoading(true); 
+    setBacktestResult(null);
+    const payload = { 
+      email: session?.user?.email || "test", 
+      name: strategyName, 
+      symbol, 
+      broker,
+      logic: { conditions, timeframe, quantity: Number(quantity), sl: Number(stopLoss), tp: Number(takeProfit) } 
+    };
     try {
         const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
         const res = await fetch(apiUrl + '/strategy/backtest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
         const data = await res.json();
-        if (data.error) { alert("Error: " + data.error); } else { setBacktestResult(data); }
+        if (data.error) { 
+            alert("Error: " + data.error); 
+        } else { 
+            setBacktestResult(data); 
+        }
     } catch(e) { alert("Backtest Failed"); }
     setBacktestLoading(false);
   };
@@ -184,6 +216,7 @@ function BuilderContent() {
   const IndicatorSelect = ({ side, data, onChange, onParamChange }: any) => {
     if (!data || !data.type) return <div className="text-red-500 text-xs p-2">Invalid Data</div>;
     const selectedDef = INDICATORS.find(i => i.value === data.type);
+    
     return (
         <div className="flex flex-col gap-2 bg-slate-950 p-3 rounded-lg border border-slate-700 min-w-[250px]">
             <div className="relative">
@@ -197,7 +230,12 @@ function BuilderContent() {
                     {selectedDef.params.map((p: any) => (
                         <div key={p.name}>
                             <label className="text-[10px] text-slate-500 uppercase">{p.name}</label>
-                            <input type={p.name === 'source' ? 'text' : 'number'} className="w-full bg-black/30 border border-slate-800 rounded px-2 py-1 text-xs text-cyan-400" value={data.params?.[p.name] || ''} onChange={(e) => onParamChange(p.name, e.target.value)} />
+                            <input 
+                              type={p.name === 'source' ? 'text' : 'number'} 
+                              className="w-full bg-black/30 border border-slate-800 rounded px-2 py-1 text-xs text-cyan-400" 
+                              value={data.params?.[p.name] || ''} 
+                              onChange={(e) => onParamChange(p.name, e.target.value)} 
+                            />
                         </div>
                     ))}
                 </div>
@@ -206,13 +244,20 @@ function BuilderContent() {
     );
   };
 
-  const formatIST = (isoString: string) => { try { return new Date(isoString).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'short' }); } catch { return "-"; } };
-  const formatPrice = (p: any) => { if (p === undefined || p === null || isNaN(Number(p))) return "0.00"; return Number(p).toFixed(2); };
+  const formatIST = (isoString: string) => { 
+      try { return new Date(isoString).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'short' }); } 
+      catch { return "-"; } 
+  };
+  
+  const formatPrice = (p: any) => { 
+      if (p === undefined || p === null || isNaN(Number(p))) return "0.00"; 
+      return Number(p).toFixed(2); 
+  };
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 pb-20">
         
-        {/* --- 🌟 NEW AI MAGIC BOX 🌟 --- */}
+        {/* --- 🌟 AI SECTION IS HERE 🌟 --- */}
         <div className="col-span-1 lg:col-span-4 bg-gradient-to-r from-slate-900 to-slate-950 p-1 rounded-2xl border border-slate-800 shadow-[0_0_30px_rgba(16,185,129,0.1)]">
             <div className="bg-slate-950 p-6 rounded-xl flex flex-col md:flex-row gap-4 items-center">
                 <div className="p-4 bg-emerald-500/10 rounded-full text-emerald-400">
@@ -223,7 +268,7 @@ function BuilderContent() {
                     <textarea 
                         value={aiPrompt}
                         onChange={(e) => setAiPrompt(e.target.value)}
-                        placeholder="e.g. 'Build a scalping bot for SOLUSDT on 5m timeframe. Buy when EMA 9 crosses above EMA 21. Stop loss 1%, take profit 3%.'"
+                        placeholder="e.g. 'Build a Bitcoin scalping strategy. Buy when RSI is below 30 and EMA 9 crosses above EMA 21. Stop loss 1%, take profit 2%.'"
                         className="w-full bg-black/50 border border-slate-700 rounded-xl p-4 text-sm text-white focus:border-emerald-500 outline-none resize-none h-20 placeholder:text-slate-600"
                     />
                 </div>
@@ -243,7 +288,10 @@ function BuilderContent() {
           <div className="bg-slate-900 p-6 rounded-xl border border-slate-800">
             <h3 className="text-lg font-semibold mb-4 text-cyan-400 flex items-center gap-2"><Zap size={18} /> Asset</h3>
             <div className="space-y-4">
-                <div><label className="block text-sm text-slate-400 mb-1">Name</label><input type="text" value={strategyName} onChange={(e) => setStrategyName(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded p-2 outline-none focus:border-cyan-500" /></div>
+                <div>
+                  <label className="block text-sm text-slate-400 mb-1">Name</label>
+                  <input type="text" value={strategyName} onChange={(e) => setStrategyName(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded p-2 outline-none focus:border-cyan-500" />
+                </div>
                 <div>
                     <label className="block text-sm text-slate-400 mb-1 flex items-center gap-2">Broker</label>
                     <select value={broker} onChange={(e) => setBroker(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded p-2 outline-none font-bold text-yellow-500">
@@ -260,7 +308,12 @@ function BuilderContent() {
                 <div>
                     <label className="block text-sm text-slate-400 mb-1 flex items-center gap-2"><Clock size={12}/> Timeframe</label>
                     <select value={timeframe} onChange={(e) => setTimeframe(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded p-2 outline-none">
-                        <option value="1m">1 Min</option><option value="5m">5 Min</option><option value="15m">15 Min</option><option value="1h">1 Hour</option><option value="4h">4 Hour</option><option value="1d">1 Day</option>
+                        <option value="1m">1 Min</option>
+                        <option value="5m">5 Min</option>
+                        <option value="15m">15 Min</option>
+                        <option value="1h">1 Hour</option>
+                        <option value="4h">4 Hour</option>
+                        <option value="1d">1 Day</option>
                     </select>
                 </div>
             </div>
@@ -269,10 +322,19 @@ function BuilderContent() {
           <div className="bg-slate-900 p-6 rounded-xl border border-slate-800">
             <h3 className="text-lg font-semibold mb-4 text-orange-400 flex items-center gap-2"><AlertTriangle size={18} /> Risk</h3>
             <div className="space-y-4">
-                <div><label className="block text-sm text-slate-400 mb-1">Qty</label><input type="number" value={quantity} onChange={(e) => setQuantity(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-700 rounded p-2 outline-none" /></div>
+                <div>
+                  <label className="block text-sm text-slate-400 mb-1">Qty</label>
+                  <input type="number" value={quantity} onChange={(e) => setQuantity(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-700 rounded p-2 outline-none" />
+                </div>
                 <div className="grid grid-cols-2 gap-4">
-                    <div><label className="block text-sm text-red-400 mb-1">SL %</label><input type="number" step="0.1" value={stopLoss} onChange={(e) => setStopLoss(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-700 rounded p-2 outline-none" /></div>
-                    <div><label className="block text-sm text-emerald-400 mb-1">TP %</label><input type="number" step="0.1" value={takeProfit} onChange={(e) => setTakeProfit(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-700 rounded p-2 outline-none" /></div>
+                    <div>
+                      <label className="block text-sm text-red-400 mb-1">SL %</label>
+                      <input type="number" step="0.1" value={stopLoss} onChange={(e) => setStopLoss(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-700 rounded p-2 outline-none" />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-emerald-400 mb-1">TP %</label>
+                      <input type="number" step="0.1" value={takeProfit} onChange={(e) => setTakeProfit(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-700 rounded p-2 outline-none" />
+                    </div>
                 </div>
             </div>
           </div>
@@ -345,7 +407,7 @@ function BuilderContent() {
                     )}
                     
                     <div className="h-80 w-full bg-slate-900 rounded-2xl border border-slate-700 p-4">
-                        <ResponsiveContainer width="100%" height={320}>
+                        <ResponsiveContainer width="100%" height="100%">
                             <LineChart data={backtestResult.equity}>
                                 <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                                 <XAxis dataKey="time" hide />
