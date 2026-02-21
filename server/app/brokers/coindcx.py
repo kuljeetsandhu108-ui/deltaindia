@@ -21,8 +21,7 @@ class CoinDCXManager:
                 name = market.get('coindcx_name', '')
                 status = market.get('status')
                 
-                # STRICT FILTER: We only want Active Futures (Usually start with 'B-' for Binance liquidity pool)
-                # and ending in USDT. This guarantees high liquidity and shorting ability.
+                # STRICT FILTER: Active Futures starting with 'B-' and ending in '_USDT'
                 if status == 'active' and name.startswith('B-') and name.endswith('_USDT'):
                     symbols.append(name)
             
@@ -41,6 +40,17 @@ class CoinDCXManager:
     async def fetch_history(self, symbol, timeframe='1h', limit=1000):
         """Fetches candles directly from CoinDCX Public API"""
         try:
+            # 1. AUTO-FIX THE SYMBOL FORMAT
+            # If the user passed "BTC/USDT" or "BTC-USDT", we force it to the CoinDCX internal format "B-BTC_USDT"
+            # This makes the backtester idiot-proof against old saved strategies.
+            clean_symbol = symbol.replace("/", "").replace("-", "")
+            if clean_symbol.endswith("USDT") and not clean_symbol.startswith("B-"):
+                 # Extract base (e.g., BTC from BTCUSDT)
+                 base = clean_symbol[:-4] 
+                 internal_symbol = f"B-{base}_USDT"
+                 print(f"🔄 Auto-corrected symbol {symbol} -> {internal_symbol}")
+                 symbol = internal_symbol
+
             # Map timeframes to CoinDCX standards
             tf_map = {'1m': '1m', '5m': '5m', '15m': '15m', '1h': '1h', '4h': '4h', '1d': '1d'}
             tf = tf_map.get(timeframe, '1h')
@@ -67,7 +77,6 @@ class CoinDCXManager:
                 print(f"❌ CoinDCX returned empty data for {symbol}")
                 return pd.DataFrame()
                 
-            # CoinDCX returns data as: [{'open': 60000, 'high': 61000, 'low': 59000, 'close': 60500, 'volume': 10, 'time': 1610000000000}]
             df = pd.DataFrame(data)
             
             if 'time' not in df.columns:
@@ -78,7 +87,7 @@ class CoinDCXManager:
             cols = ['open', 'high', 'low', 'close', 'volume']
             df[cols] = df[cols].apply(pd.to_numeric, errors='coerce')
             
-            # CRITICAL: CoinDCX sends newest to oldest. We MUST reverse it for Backtesting (oldest to newest)
+            # CoinDCX sends newest to oldest. Reverse it!
             df = df.iloc[::-1].reset_index(drop=True)
             
             return df.dropna()
