@@ -17,7 +17,7 @@ function BuilderContent() {
 
   // --- STATE VARIABLES ---
   const [strategyName, setStrategyName] = useState("My Pro Algo");
-  const [broker, setBroker] = useState("COINDCX");
+  const [broker, setBroker] = useState("DELTA");
   const [symbol, setSymbol] = useState("BTCUSDT");
   const [timeframe, setTimeframe] = useState("1h");
   const [quantity, setQuantity] = useState(1);
@@ -89,7 +89,7 @@ function BuilderContent() {
     }
   }, [editId, session]);
 
-  // --- AI GENERATOR FUNCTION ---
+  // --- 🌟 MAGIC AI GENERATOR FUNCTION 🌟 ---
   const handleAIGenerate = async () => {
     if (!aiPrompt) return;
     setIsGenerating(true);
@@ -105,15 +105,16 @@ function BuilderContent() {
         if (data.error) {
             alert("AI Error: " + data.error);
         } else {
-            // Apply AI Data
-            setStrategyName(data.strategyName || "AI Strategy");
+            // Apply AI generated data to the visual builder
+            setStrategyName(data.strategyName || "AI Generated Strategy");
             if (data.symbol) setSymbol(data.symbol);
             if (data.timeframe) setTimeframe(data.timeframe);
             if (data.quantity) setQuantity(data.quantity);
             if (data.sl !== undefined) setStopLoss(data.sl);
             if (data.tp !== undefined) setTakeProfit(data.tp);
-            if (data.broker) setBroker(data.broker); // AI can choose broker too
+            if (data.broker) setBroker(data.broker); 
             
+            // Map AI conditions safely
             if (data.conditions && data.conditions.length > 0) {
                 const mappedConds = data.conditions.map((c: any, index: number) => ({
                     id: Date.now() + index,
@@ -123,7 +124,7 @@ function BuilderContent() {
                 }));
                 setConditions(mappedConds);
             }
-            setAiPrompt(""); 
+            setAiPrompt(""); // Clear prompt
         }
     } catch (e) {
         alert("Failed to communicate with AI.");
@@ -157,7 +158,7 @@ function BuilderContent() {
   const updateParam = (id: number, side: 'left' | 'right', paramName: string, val: any) => { 
     setConditions(conditions.map(c => { 
         if (c.id !== id) return c; 
-        const sideData: any = side === 'left' ? c.left : c.right;
+        const sideData: any = (side === 'left' ? c.left : c.right);
         const newSide = { ...sideData, params: { ...sideData.params, [paramName]: val } };
         return { ...c, [side]: newSide }; 
     })); 
@@ -257,8 +258,8 @@ function BuilderContent() {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 pb-20">
         
-        {/* --- 🌟 AI SECTION IS HERE 🌟 --- */}
-        <div className="col-span-1 lg:col-span-4 bg-gradient-to-r from-slate-900 to-slate-950 p-1 rounded-2xl border border-slate-800 shadow-[0_0_30px_rgba(16,185,129,0.1)]">
+        {/* --- 🌟 THE AI MAGIC BOX (NOW ACTUALLY IN THE UI) 🌟 --- */}
+        <div className="col-span-1 lg:col-span-4 bg-gradient-to-r from-slate-900 to-slate-950 p-1 rounded-2xl border border-slate-800 shadow-[0_0_30px_rgba(16,185,129,0.1)] mb-2">
             <div className="bg-slate-950 p-6 rounded-xl flex flex-col md:flex-row gap-4 items-center">
                 <div className="p-4 bg-emerald-500/10 rounded-full text-emerald-400">
                     <Sparkles size={32} />
@@ -407,7 +408,7 @@ function BuilderContent() {
                     )}
                     
                     <div className="h-80 w-full bg-slate-900 rounded-2xl border border-slate-700 p-4">
-                        <ResponsiveContainer width="100%" height="100%">
+                        <ResponsiveContainer width="100%" height={320}>
                             <LineChart data={backtestResult.equity}>
                                 <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                                 <XAxis dataKey="time" hide />
