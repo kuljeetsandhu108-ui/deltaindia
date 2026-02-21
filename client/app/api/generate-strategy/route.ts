@@ -11,17 +11,15 @@ export async function POST(req: Request) {
 
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
     
-    // We use gemini-1.5-flash for speed and JSON capabilities
     const model = genAI.getGenerativeModel({ 
         model: "gemini-1.5-flash",
         generationConfig: {
             responseMimeType: "application/json",
-            temperature: 0.2, // Low temp for strict logic
+            temperature: 0.2, 
         }
     });
 
-    const systemInstruction = \
-    You are an elite quantitative algorithmic trading assistant for 'AlgoTrade India'. 
+    const systemInstruction = `You are an elite quantitative algorithmic trading assistant for 'AlgoTrade India'. 
     The user will give you a text prompt describing a trading strategy.
     You MUST output valid JSON ONLY, mapping to the platform's exact data structure.
     
@@ -58,10 +56,9 @@ export async function POST(req: Request) {
           "right": { "type": "number", "params": { "value": 30 } }
         }
       ]
-    }
-    \;
+    }`;
 
-    const finalPrompt = \\\n\nUser Request: \\;
+    const finalPrompt = `${systemInstruction}\n\nUser Request: ${prompt}`;
     const result = await model.generateContent(finalPrompt);
     const responseText = result.response.text();
     
