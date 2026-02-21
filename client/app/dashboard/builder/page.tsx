@@ -17,7 +17,7 @@ function BuilderContent() {
 
   // --- STATE VARIABLES ---
   const [strategyName, setStrategyName] = useState("My Pro Algo");
-  const [broker, setBroker] = useState("COINDCX");
+  const [broker, setBroker] = useState("DELTA");
   const [symbol, setSymbol] = useState("BTCUSDT");
   const [timeframe, setTimeframe] = useState("1h");
   const [quantity, setQuantity] = useState(1);
@@ -157,7 +157,7 @@ function BuilderContent() {
   const updateParam = (id: number, side: 'left' | 'right', paramName: string, val: any) => { 
     setConditions(conditions.map(c => { 
         if (c.id !== id) return c; 
-        const sideData: any = (side === 'left' ? c.left : c.right);
+        const sideData: any = side === 'left' ? c.left : c.right;
         const newSide = { ...sideData, params: { ...sideData.params, [paramName]: val } };
         return { ...c, [side]: newSide }; 
     })); 
@@ -257,7 +257,36 @@ function BuilderContent() {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 pb-20">
         
-        {/* LEFT COLUMN: SETTINGS */}
+        {/* --- 🌟 THE AI MAGIC BOX (NOW ACTUALLY IN THE UI) 🌟 --- */}
+        <div className="col-span-1 lg:col-span-4 bg-gradient-to-r from-indigo-900/50 to-purple-900/50 p-6 rounded-2xl border border-indigo-500/30 shadow-lg">
+            <div className="flex flex-col md:flex-row gap-4 items-center">
+                <div className="p-3 bg-indigo-500/20 rounded-full text-indigo-300">
+                    <Bot size={24} />
+                </div>
+                <div className="flex-1 w-full">
+                    <h3 className="text-xl font-bold text-white flex items-center gap-2 mb-2">
+                       Strategy AI Assistant <span className="text-xs bg-indigo-500 px-2 py-0.5 rounded text-white">BETA</span>
+                    </h3>
+                    <textarea 
+                        value={aiPrompt}
+                        onChange={(e) => setAiPrompt(e.target.value)}
+                        placeholder="e.g. 'Build a scalping strategy for BTC on CoinDCX. Buy when RSI is below 30. Stop Loss 1%, Take Profit 2%.'"
+                        className="w-full bg-slate-950/80 border border-slate-700 rounded-xl p-4 text-sm text-white focus:border-indigo-500 outline-none resize-none h-20 placeholder:text-slate-600 shadow-inner"
+                    />
+                </div>
+                <button 
+                    onClick={handleAIGenerate} 
+                    disabled={isGenerating || !aiPrompt}
+                    className="w-full md:w-auto h-20 px-8 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+                >
+                    {isGenerating ? <Loader2 className="animate-spin" size={20} /> : <Sparkles size={20} />}
+                    {isGenerating ? "Thinking..." : "Generate"}
+                </button>
+            </div>
+        </div>
+        {/* --- END AI BOX --- */}
+
+        {/* SETTINGS PANEL */}
         <div className="col-span-1 space-y-6">
           <div className="bg-slate-900 p-6 rounded-xl border border-slate-800">
             <h3 className="text-lg font-semibold mb-4 text-cyan-400 flex items-center gap-2"><Zap size={18} /> Asset</h3>
@@ -323,41 +352,8 @@ function BuilderContent() {
           </div>
         </div>
 
-        {/* RIGHT COLUMN: AI & LOGIC */}
-        <div className="col-span-3 space-y-6">
-            
-            {/* --- 🌟 AI MAGIC BOX IS HERE 🌟 --- */}
-            <div className="bg-gradient-to-r from-indigo-900/50 to-purple-900/50 p-6 rounded-2xl border border-indigo-500/30 shadow-lg">
-                <div className="flex items-start gap-4">
-                    <div className="p-3 bg-indigo-500/20 rounded-full text-indigo-300 mt-1">
-                        <Bot size={24} />
-                    </div>
-                    <div className="flex-1 space-y-3">
-                        <h3 className="text-xl font-bold text-white flex items-center gap-2">
-                           Strategy AI Assistant <span className="text-xs bg-indigo-500 px-2 py-0.5 rounded text-white">BETA</span>
-                        </h3>
-                        <p className="text-sm text-slate-400">Describe your strategy in plain English, and the AI will configure the indicators, risk, and pairs for you.</p>
-                        <div className="relative">
-                            <textarea 
-                                value={aiPrompt}
-                                onChange={(e) => setAiPrompt(e.target.value)}
-                                placeholder="e.g. 'Create a scalping strategy for BTC on CoinDCX. Buy when RSI is below 30. Stop Loss 1%, Take Profit 2%.'"
-                                className="w-full bg-slate-950/80 border border-slate-700 rounded-xl p-4 text-sm text-white focus:border-indigo-500 outline-none resize-none h-24 placeholder:text-slate-600 shadow-inner"
-                            />
-                            <button 
-                                onClick={handleAIGenerate} 
-                                disabled={isGenerating || !aiPrompt}
-                                className="absolute bottom-3 right-3 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg flex items-center gap-2 transition-all disabled:opacity-50"
-                            >
-                                {isGenerating ? <Loader2 className="animate-spin" size={14} /> : <Sparkles size={14} />}
-                                {isGenerating ? "Thinking..." : "Generate"}
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            {/* --- END AI BOX --- */}
-
+        {/* LOGIC BUILDER */}
+        <div className="col-span-3 space-y-4">
             <h3 className="text-lg font-semibold text-emerald-400 flex items-center gap-2"><Settings2 size={18}/> Entry Logic</h3>
             <div className="space-y-4">
                 {conditions.map((c, i) => (
