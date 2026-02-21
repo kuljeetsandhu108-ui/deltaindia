@@ -10,17 +10,19 @@ class CoinDCXManager:
         self.public_url = "https://public.coindcx.com"
 
     async def fetch_symbols(self):
-        """Fetches ALL USDT pairs using the Ticker API (Most Reliable)"""
-        print("... Connecting to CoinDCX Ticker API ...")
+        """Fetches ALL USDT pairs using the Ticker API"""
+        print("... CoinDCX Manager: Connecting to Ticker API ...")
         try:
-            # Use the Ticker endpoint which lists all active trading pairs
+            # 1. Use the Ticker endpoint (Proven to work)
             url = f"{self.base_url}/exchange/ticker"
             
-            # Run in thread to avoid blocking
-            response = await asyncio.to_thread(requests.get, url, timeout=15)
+            # Run in thread with a long timeout (30s)
+            response = await asyncio.to_thread(requests.get, url, timeout=30)
+            
+            print(f"CoinDCX Response Status: {response.status_code}")
             
             if response.status_code != 200:
-                print(f"❌ CoinDCX API Error: {response.status_code}")
+                print(f"❌ CoinDCX API Error: {response.text}")
                 return []
 
             data = response.json()
@@ -35,22 +37,21 @@ class CoinDCXManager:
             unique_symbols = sorted(list(set(symbols)))
             
             if len(unique_symbols) > 5:
-                print(f"✅ Loaded {len(unique_symbols)} Pairs from CoinDCX")
+                print(f"✅ CoinDCX Loaded {len(unique_symbols)} Pairs (e.g., {unique_symbols[0]})")
                 return unique_symbols
             else:
-                print("⚠️ CoinDCX returned too few symbols.")
+                print("⚠️ CoinDCX returned 0 symbols in filter.")
                 return []
                 
         except Exception as e:
-            print(f"❌ CoinDCX Symbol Exception: {e}")
+            print(f"❌ CoinDCX Exception: {e}")
             return [] 
 
     async def fetch_history(self, symbol, timeframe='1h', limit=1000):
         try:
-            # Auto-clean symbol format (BTC/USDT -> BTCUSDT)
+            # Clean Symbol: BTC/USDT -> BTCUSDT
             clean_symbol = symbol.replace("/", "").replace("-", "").replace("_", "")
             
-            # Map timeframes
             tf_map = {'1m': '1m', '5m': '5m', '15m': '15m', '1h': '1h', '4h': '4h', '1d': '1d'}
             tf = tf_map.get(timeframe, '1h')
             if tf == '1m': limit = 2000
@@ -61,15 +62,14 @@ class CoinDCXManager:
             response = await asyncio.to_thread(requests.get, url, params=params)
             data = response.json()
             
+            # If standard fails, try B- prefix (Futures)
             if not data or not isinstance(data, list):
-                # Retry with B- prefix (Futures convention)
                 fallback = f"B-{clean_symbol}"
                 params['pair'] = fallback
                 response = await asyncio.to_thread(requests.get, url, params=params)
                 data = response.json()
-                
-                if not data or not isinstance(data, list):
-                    return pd.DataFrame()
+            
+            if not data or not isinstance(data, list): return pd.DataFrame()
 
             df = pd.DataFrame(data)
             if 'time' not in df.columns: return pd.DataFrame()
@@ -78,7 +78,7 @@ class CoinDCXManager:
             cols = ['open', 'high', 'low', 'close', 'volume']
             df[cols] = df[cols].apply(pd.to_numeric, errors='coerce')
             
-            # Reverse to chronological order
+            # Reverse chronological
             df = df.iloc[::-1].reset_index(drop=True)
             return df.dropna()
         except Exception as e:
