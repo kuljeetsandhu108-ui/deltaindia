@@ -2,7 +2,7 @@
 
 import { useState, useEffect, Suspense } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowLeft, Play, Plus, Trash2, Zap, AlertTriangle, Search, Settings2, Save, BarChart2, Clock, List, TrendingUp, Activity, DollarSign, Sparkles, Loader2 } from 'lucide-react';
+import { ArrowLeft, Play, Plus, Trash2, Zap, AlertTriangle, Search, Settings2, Save, BarChart2, Clock, List, TrendingUp, Activity, DollarSign, Sparkles, Loader2, Bot } from 'lucide-react';
 import Link from 'next/link';
 import { useSession } from 'next-auth/react';
 import { INDICATORS } from '@/lib/indicators';
@@ -17,7 +17,7 @@ function BuilderContent() {
 
   // --- STATE VARIABLES ---
   const [strategyName, setStrategyName] = useState("My Pro Algo");
-  const [broker, setBroker] = useState("DELTA");
+  const [broker, setBroker] = useState("COINDCX");
   const [symbol, setSymbol] = useState("BTCUSDT");
   const [timeframe, setTimeframe] = useState("1h");
   const [quantity, setQuantity] = useState(1);
@@ -89,7 +89,7 @@ function BuilderContent() {
     }
   }, [editId, session]);
 
-  // --- 🌟 MAGIC AI GENERATOR FUNCTION 🌟 ---
+  // --- AI GENERATOR FUNCTION ---
   const handleAIGenerate = async () => {
     if (!aiPrompt) return;
     setIsGenerating(true);
@@ -105,8 +105,8 @@ function BuilderContent() {
         if (data.error) {
             alert("AI Error: " + data.error);
         } else {
-            // Apply AI generated data to the visual builder
-            setStrategyName(data.strategyName || "AI Generated Strategy");
+            // Apply AI Data
+            setStrategyName(data.strategyName || "AI Strategy");
             if (data.symbol) setSymbol(data.symbol);
             if (data.timeframe) setTimeframe(data.timeframe);
             if (data.quantity) setQuantity(data.quantity);
@@ -114,7 +114,6 @@ function BuilderContent() {
             if (data.tp !== undefined) setTakeProfit(data.tp);
             if (data.broker) setBroker(data.broker); 
             
-            // Map AI conditions safely
             if (data.conditions && data.conditions.length > 0) {
                 const mappedConds = data.conditions.map((c: any, index: number) => ({
                     id: Date.now() + index,
@@ -124,7 +123,7 @@ function BuilderContent() {
                 }));
                 setConditions(mappedConds);
             }
-            setAiPrompt(""); // Clear prompt
+            setAiPrompt(""); 
         }
     } catch (e) {
         alert("Failed to communicate with AI.");
@@ -258,33 +257,7 @@ function BuilderContent() {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 pb-20">
         
-        {/* --- 🌟 THE AI MAGIC BOX (NOW ACTUALLY IN THE UI) 🌟 --- */}
-        <div className="col-span-1 lg:col-span-4 bg-gradient-to-r from-slate-900 to-slate-950 p-1 rounded-2xl border border-slate-800 shadow-[0_0_30px_rgba(16,185,129,0.1)] mb-2">
-            <div className="bg-slate-950 p-6 rounded-xl flex flex-col md:flex-row gap-4 items-center">
-                <div className="p-4 bg-emerald-500/10 rounded-full text-emerald-400">
-                    <Sparkles size={32} />
-                </div>
-                <div className="flex-1 w-full">
-                    <h2 className="text-xl font-bold bg-gradient-to-r from-emerald-400 to-cyan-400 bg-clip-text text-transparent mb-2">Build with AI</h2>
-                    <textarea 
-                        value={aiPrompt}
-                        onChange={(e) => setAiPrompt(e.target.value)}
-                        placeholder="e.g. 'Build a Bitcoin scalping strategy. Buy when RSI is below 30 and EMA 9 crosses above EMA 21. Stop loss 1%, take profit 2%.'"
-                        className="w-full bg-black/50 border border-slate-700 rounded-xl p-4 text-sm text-white focus:border-emerald-500 outline-none resize-none h-20 placeholder:text-slate-600"
-                    />
-                </div>
-                <button 
-                    onClick={handleAIGenerate} 
-                    disabled={isGenerating || !aiPrompt}
-                    className="w-full md:w-auto h-20 px-8 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:hover:bg-emerald-600 text-white font-bold rounded-xl flex items-center justify-center gap-2 transition-all"
-                >
-                    {isGenerating ? <Loader2 className="animate-spin" size={20} /> : <Zap size={20} />}
-                    {isGenerating ? "Generating..." : "Generate Magic"}
-                </button>
-            </div>
-        </div>
-
-        {/* SETTINGS PANEL */}
+        {/* LEFT COLUMN: SETTINGS */}
         <div className="col-span-1 space-y-6">
           <div className="bg-slate-900 p-6 rounded-xl border border-slate-800">
             <h3 className="text-lg font-semibold mb-4 text-cyan-400 flex items-center gap-2"><Zap size={18} /> Asset</h3>
@@ -301,9 +274,9 @@ function BuilderContent() {
                     </select>
                 </div>
                 <div>
-                    <label className="block text-sm text-slate-400 mb-1">Pair</label>
+                    <label className="block text-sm text-slate-400 mb-1">Pair ({symbolList.length})</label>
                     <select value={symbol} onChange={(e) => setSymbol(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded p-2 outline-none">
-                        {symbolList.length > 0 ? symbolList.map(s => (<option key={s} value={s}>{s}</option>)) : <option value="BTCUSDT">BTC/USDT</option>}
+                        {symbolList.length > 0 ? symbolList.map(s => (<option key={s} value={s}>{s}</option>)) : <option value="BTCUSDT">Loading...</option>}
                     </select>
                 </div>
                 <div>
@@ -350,8 +323,41 @@ function BuilderContent() {
           </div>
         </div>
 
-        {/* LOGIC BUILDER */}
-        <div className="col-span-3 space-y-4">
+        {/* RIGHT COLUMN: AI & LOGIC */}
+        <div className="col-span-3 space-y-6">
+            
+            {/* --- 🌟 AI MAGIC BOX IS HERE 🌟 --- */}
+            <div className="bg-gradient-to-r from-indigo-900/50 to-purple-900/50 p-6 rounded-2xl border border-indigo-500/30 shadow-lg">
+                <div className="flex items-start gap-4">
+                    <div className="p-3 bg-indigo-500/20 rounded-full text-indigo-300 mt-1">
+                        <Bot size={24} />
+                    </div>
+                    <div className="flex-1 space-y-3">
+                        <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                           Strategy AI Assistant <span className="text-xs bg-indigo-500 px-2 py-0.5 rounded text-white">BETA</span>
+                        </h3>
+                        <p className="text-sm text-slate-400">Describe your strategy in plain English, and the AI will configure the indicators, risk, and pairs for you.</p>
+                        <div className="relative">
+                            <textarea 
+                                value={aiPrompt}
+                                onChange={(e) => setAiPrompt(e.target.value)}
+                                placeholder="e.g. 'Create a scalping strategy for BTC on CoinDCX. Buy when RSI is below 30. Stop Loss 1%, Take Profit 2%.'"
+                                className="w-full bg-slate-950/80 border border-slate-700 rounded-xl p-4 text-sm text-white focus:border-indigo-500 outline-none resize-none h-24 placeholder:text-slate-600 shadow-inner"
+                            />
+                            <button 
+                                onClick={handleAIGenerate} 
+                                disabled={isGenerating || !aiPrompt}
+                                className="absolute bottom-3 right-3 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg flex items-center gap-2 transition-all disabled:opacity-50"
+                            >
+                                {isGenerating ? <Loader2 className="animate-spin" size={14} /> : <Sparkles size={14} />}
+                                {isGenerating ? "Thinking..." : "Generate"}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {/* --- END AI BOX --- */}
+
             <h3 className="text-lg font-semibold text-emerald-400 flex items-center gap-2"><Settings2 size={18}/> Entry Logic</h3>
             <div className="space-y-4">
                 {conditions.map((c, i) => (
