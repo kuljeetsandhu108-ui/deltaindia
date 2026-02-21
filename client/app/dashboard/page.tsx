@@ -2,7 +2,7 @@
 import { useSession } from "next-auth/react";
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Activity, Plus, Zap, BarChart3, Settings, PlayCircle, Power, Trash2, Terminal, X, Edit3, PauseCircle, Play, Loader2 } from "lucide-react";
+import { Activity, Plus, Zap, BarChart3, Settings, PlayCircle, Trash2, Terminal, X, Edit3, PauseCircle, Play, Loader2 } from "lucide-react";
 import Link from 'next/link';
 
 export default function Dashboard() {
@@ -49,8 +49,6 @@ export default function Dashboard() {
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
       const res = await fetch(apiUrl + '/strategies/' + id, { method: 'DELETE' });
-      
-      // THE FIX: Only remove from UI if server says OK
       if (res.ok) {
           setStrategies(strategies.filter((s: any) => s.id !== id));
       } else {
@@ -114,12 +112,20 @@ export default function Dashboard() {
           <div className="border-2 border-dashed border-slate-800 rounded-[2rem] p-16 flex flex-col items-center justify-center text-slate-500"><div className="bg-slate-900 p-6 rounded-full mb-6"><PlayCircle size={48} className="text-slate-400" /></div><p className="text-xl mb-6">No algorithms running yet.</p><Link href="/dashboard/builder"><button className="text-emerald-400 hover:text-emerald-300 font-bold text-lg hover:underline">+ Create New Algo</button></Link></div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-            {strategies.map((strat: any) => (
-              <motion.div initial={{opacity:0, y:20}} animate={{opacity:1, y:0}} key={strat.id} className={p-8 rounded-[2rem] border transition-all group relative hover:shadow-2xl hover:shadow-black/50 }>
+            {strategies.map((strat: any) => {
+              
+              // SAFE STRING DECLARATIONS
+              const isRunning = strat.is_running;
+              const cardClass = "p-8 rounded-[2rem] border transition-all group relative hover:shadow-2xl hover:shadow-black/50 " + (isRunning ? "bg-slate-900 border-slate-800 hover:border-emerald-500/30" : "bg-slate-900/50 border-slate-800 opacity-75");
+              const toggleClass = "w-12 h-12 flex items-center justify-center rounded-full transition-all shadow-lg hover:scale-105 " + (isRunning ? "bg-yellow-500/10 text-yellow-500 hover:bg-yellow-500 hover:text-black" : "bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500 hover:text-white");
+              const statusClass = "flex items-center gap-3 text-sm font-bold px-4 py-2 rounded-full w-fit border " + (isRunning ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/20" : "text-yellow-500 bg-yellow-500/10 border-yellow-500/20");
+
+              return (
+              <motion.div initial={{opacity:0, y:20}} animate={{opacity:1, y:0}} key={strat.id} className={cardClass}>
                 <div className="flex justify-between items-start mb-6">
                   <div className="flex gap-2">
-                    <button onClick={() => handleToggle(strat.id)} disabled={togglingId === strat.id} className={w-12 h-12 flex items-center justify-center rounded-full transition-all shadow-lg hover:scale-105 }>
-                        {togglingId === strat.id ? <Loader2 size={24} className="animate-spin" /> : (strat.is_running ? <PauseCircle size={24} /> : <Play size={24} className="ml-1" />)}
+                    <button onClick={() => handleToggle(strat.id)} disabled={togglingId === strat.id} className={toggleClass}>
+                        {togglingId === strat.id ? <Loader2 size={24} className="animate-spin" /> : (isRunning ? <PauseCircle size={24} /> : <Play size={24} className="ml-1" />)}
                     </button>
                   </div>
                   <div className="flex gap-2">
@@ -130,13 +136,13 @@ export default function Dashboard() {
                 </div>
                 <h3 className="font-bold text-xl mb-2">{strat.name}</h3>
                 <div className="text-slate-400 text-sm mb-6 flex items-center gap-2"><span className="bg-slate-800 px-3 py-1 rounded-full text-xs">{strat.symbol}</span><span className="bg-slate-800 px-3 py-1 rounded-full text-xs">{strat.broker || 'DELTA'}</span></div>
-                {strat.is_running ? (
-                    <div className="flex items-center gap-3 text-sm font-bold text-emerald-400 bg-emerald-500/10 px-4 py-2 rounded-full w-fit border border-emerald-500/20"><span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> RUNNING</div>
-                ) : (
-                    <div className="flex items-center gap-3 text-sm font-bold text-yellow-500 bg-yellow-500/10 px-4 py-2 rounded-full w-fit border border-yellow-500/20"><span className="w-2 h-2 rounded-full bg-yellow-500"></span> PAUSED</div>
-                )}
+                
+                <div className={statusClass}>
+                    {isRunning ? <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> : <span className="w-2 h-2 rounded-full bg-yellow-500"></span>}
+                    {isRunning ? "RUNNING" : "PAUSED"}
+                </div>
               </motion.div>
-            ))}
+            )})}
           </div>
         )}
       </main>
