@@ -1,14 +1,12 @@
 ﻿from sqlalchemy.orm import Session
 from . import models, schemas, security
 
-# LOGGING FUNCTION (Must be defined first)
 def create_log(db: Session, strategy_id: int, message: str, level: str = "INFO"):
     try:
         new_log = models.StrategyLog(strategy_id=strategy_id, message=message, level=level)
         db.add(new_log)
         db.commit()
-    except:
-        pass # Don't crash if logging fails
+    except: pass
 
 def get_user_by_email(db: Session, email: str):
     return db.query(models.User).filter(models.User.email == email).first()
@@ -23,37 +21,30 @@ def create_user(db: Session, user: schemas.UserCreate):
 def update_broker_keys(db: Session, keys: schemas.BrokerKeys):
     user = get_user_by_email(db, keys.email)
     if not user: return None
-    
     enc_key = security.encrypt_value(keys.api_key)
     enc_secret = security.encrypt_value(keys.api_secret)
-    
     if keys.broker == "DELTA":
-        user.delta_api_key = enc_key
-        user.delta_api_secret = enc_secret
+        user.delta_api_key, user.delta_api_secret = enc_key, enc_secret
     elif keys.broker == "COINDCX":
-        user.coindcx_api_key = enc_key
-        user.coindcx_api_secret = enc_secret
-        
+        user.coindcx_api_key, user.coindcx_api_secret = enc_key, enc_secret
     db.commit()
     return user
 
 def create_strategy(db: Session, strategy: schemas.StrategyInput):
     user = get_user_by_email(db, strategy.email)
-    if not user: return None
+    
+    # ⚡ AUTO-HEAL: If user lost session sync, create them instantly
+    if not user:
+        user = create_user(db, schemas.UserCreate(email=strategy.email, full_name="Trader", picture=""))
 
     db_strat = models.Strategy(
-        name=strategy.name,
-        symbol=strategy.symbol,
-        broker=strategy.broker,
-        logic_configuration=strategy.logic,
-        is_running=True, # Auto-start
-        owner_id=user.id
+        name=strategy.name, symbol=strategy.symbol, broker=strategy.broker,
+        logic_configuration=strategy.logic, is_running=True, owner_id=user.id
     )
     db.add(db_strat)
     db.commit()
     db.refresh(db_strat)
-    
-    create_log(db, db_strat.id, f"Strategy Created: {strategy.name} ({strategy.broker})", "INFO")
+    create_log(db, db_strat.id, f"Strategy Created on {strategy.broker}", "INFO")
     return db_strat
 
 def get_strategy_logs(db: Session, strategy_id: int):

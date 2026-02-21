@@ -3,28 +3,28 @@ from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
-# 1. READ FROM ENVIRONMENT VARIABLE (Docker Sets This)
-# If not found, fallback to local sqlite file
-SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./algotrade.db")
+# Get DB URL from Docker, fallback to sqlite for local testing
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./algotrade.db")
 
-# 2. CONFIGURE CONNECTION ARGS
-# SQLite needs "check_same_thread", Postgres does NOT.
-if "sqlite" in SQLALCHEMY_DATABASE_URL:
-    connect_args = {"check_same_thread": False}
+if "sqlite" in DATABASE_URL:
+    # Local Dev Mode
+    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 else:
-    connect_args = {}
-
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL, connect_args=connect_args
-)
+    # 🚀 ENTERPRISE POSTGRESQL MODE (For 1000+ Users)
+    engine = create_engine(
+        DATABASE_URL,
+        pool_size=20,         # Hold 20 open connections ready to go
+        max_overflow=10,      # Allow 10 extra connections during traffic spikes
+        pool_timeout=30,      # Don't panic immediately if busy, wait up to 30s
+        pool_recycle=1800     # Refresh connections every 30 mins to prevent timeouts
+    )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
 Base = declarative_base()
 
 def get_db():
     db = SessionLocal()
-    try:
+    try: 
         yield db
-    finally:
+    finally: 
         db.close()
