@@ -7,9 +7,9 @@ import Link from 'next/link';
 
 export default function Dashboard() {
   const { data: session } = useSession();
-  const [strategies, setStrategies] = useState([]);
+  const [strategies, setStrategies] = useState<any[]>([]);
   const [selectedStratId, setSelectedStratId] = useState<number | null>(null);
-  const [logs, setLogs] = useState([]);
+  const [logs, setLogs] = useState<any[]>([]);
   const [togglingId, setTogglingId] = useState<number | null>(null);
 
   useEffect(() => { if (session?.user?.email) fetchStrategies(); }, [session]);
@@ -20,7 +20,7 @@ export default function Dashboard() {
       const res = await fetch(apiUrl + '/strategies/' + session?.user?.email);
       const data = await res.json();
       setStrategies(data);
-    } catch (e) { console.error("Error"); }
+    } catch (e) { console.error("Error fetching strategies"); }
   };
 
   const fetchLogs = async (id: number) => {
@@ -45,12 +45,18 @@ export default function Dashboard() {
   };
 
   const handleDelete = async (id: number) => {
-    if(!confirm("Delete this strategy?")) return;
+    if(!confirm("Are you sure you want to permanently delete this strategy?")) return;
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-      await fetch(apiUrl + '/strategies/' + id, { method: 'DELETE' });
-      setStrategies(strategies.filter((s: any) => s.id !== id));
-    } catch (e) { alert("Error"); }
+      const res = await fetch(apiUrl + '/strategies/' + id, { method: 'DELETE' });
+      
+      // THE FIX: Only remove from UI if server says OK
+      if (res.ok) {
+          setStrategies(strategies.filter((s: any) => s.id !== id));
+      } else {
+          alert("Server refused to delete. Please try again.");
+      }
+    } catch (e) { alert("Network Error while deleting."); }
   };
 
   const activeCount = strategies.filter((s:any) => s.is_running).length;
@@ -109,10 +115,10 @@ export default function Dashboard() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
             {strategies.map((strat: any) => (
-              <motion.div initial={{opacity:0, y:20}} animate={{opacity:1, y:0}} key={strat.id} className={`p-8 rounded-[2rem] border transition-all group relative hover:shadow-2xl hover:shadow-black/50 ${strat.is_running ? 'bg-slate-900 border-slate-800 hover:border-emerald-500/30' : 'bg-slate-900/50 border-slate-800 opacity-75'}`}>
+              <motion.div initial={{opacity:0, y:20}} animate={{opacity:1, y:0}} key={strat.id} className={p-8 rounded-[2rem] border transition-all group relative hover:shadow-2xl hover:shadow-black/50 }>
                 <div className="flex justify-between items-start mb-6">
                   <div className="flex gap-2">
-                    <button onClick={() => handleToggle(strat.id)} disabled={togglingId === strat.id} className={`w-12 h-12 flex items-center justify-center rounded-full transition-all shadow-lg hover:scale-105 ${strat.is_running ? 'bg-yellow-500/10 text-yellow-500 hover:bg-yellow-500 hover:text-black' : 'bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500 hover:text-white'}`}>
+                    <button onClick={() => handleToggle(strat.id)} disabled={togglingId === strat.id} className={w-12 h-12 flex items-center justify-center rounded-full transition-all shadow-lg hover:scale-105 }>
                         {togglingId === strat.id ? <Loader2 size={24} className="animate-spin" /> : (strat.is_running ? <PauseCircle size={24} /> : <Play size={24} className="ml-1" />)}
                     </button>
                   </div>
@@ -123,7 +129,7 @@ export default function Dashboard() {
                   </div>
                 </div>
                 <h3 className="font-bold text-xl mb-2">{strat.name}</h3>
-                <div className="text-slate-400 text-sm mb-6 flex items-center gap-2"><span className="bg-slate-800 px-3 py-1 rounded-full text-xs">{strat.symbol}</span><span className="bg-slate-800 px-3 py-1 rounded-full text-xs">{strat.broker}</span></div>
+                <div className="text-slate-400 text-sm mb-6 flex items-center gap-2"><span className="bg-slate-800 px-3 py-1 rounded-full text-xs">{strat.symbol}</span><span className="bg-slate-800 px-3 py-1 rounded-full text-xs">{strat.broker || 'DELTA'}</span></div>
                 {strat.is_running ? (
                     <div className="flex items-center gap-3 text-sm font-bold text-emerald-400 bg-emerald-500/10 px-4 py-2 rounded-full w-fit border border-emerald-500/20"><span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> RUNNING</div>
                 ) : (

@@ -5,16 +5,17 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+
 from app import models, database, schemas, crud
 from app.engine import engine as trading_engine
 from app.backtester import backtester
-from app.brokers.coindcx import coindcx_manager
+from app.brokers.coindcx import coindcx_manager # RESTORED COINDCX IMPORT
 import ccxt.async_support as ccxt
 
-# --- SEPARATED DUAL CACHE ---
+# --- DUAL CACHE FOR BROKERS ---
 symbol_cache = {
-    "DELTA": ["BTC-USDT", "ETH-USDT", "SOL-USDT"],
-    "COINDCX": ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
+    "DELTA": ["BTCUSD", "ETHUSD"],
+    "COINDCX": ["BTC/USDT", "ETH/USDT"]
 }
 
 async def refresh_delta_symbols():
@@ -23,10 +24,14 @@ async def refresh_delta_symbols():
     try:
         exchange = ccxt.delta({'options': {'defaultType': 'future'}, 'urls': {'api': {'public': 'https://api.india.delta.exchange', 'private': 'https://api.india.delta.exchange'}, 'www': 'https://india.delta.exchange'}})
         markets = await exchange.load_markets()
-        live_symbols = [m.get('id', k) for k, m in markets.items() if m.get('active') and ('USDT' in m.get('id', '') or 'USD' in m.get('id', ''))]
-        if live_symbols: 
-            symbol_cache["DELTA"] = sorted(list(set(live_symbols)))
-            print(f"✅ Loaded Delta Pairs")
+        syms = []
+        for k, m in markets.items():
+            if m.get('active'):
+                m_id = m.get('id', k)
+                if 'USDT' in m_id or 'USD' in m_id:
+                    syms.append(m_id)
+        if syms: 
+            symbol_cache["DELTA"] = sorted(list(set(syms)))
     except Exception as e: print(f"Delta Fetch Error: {e}")
     finally:
         if exchange: await exchange.close()
@@ -35,13 +40,12 @@ async def refresh_coindcx_symbols():
     global symbol_cache
     try:
         syms = await coindcx_manager.fetch_symbols()
-        if syms and len(syms) > 0:
-            symbol_cache["COINDCX"] = syms
+        if syms: symbol_cache["COINDCX"] = syms
     except Exception as e: print(f"CoinDCX Fetch Error: {e}")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Load BOTH worlds on startup
+    # Fetch both on startup
     asyncio.create_task(refresh_delta_symbols())
     asyncio.create_task(refresh_coindcx_symbols())
     asyncio.create_task(trading_engine.start())
@@ -56,24 +60,22 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     print(f"🔥 FATAL ERROR: {traceback.format_exc()}")
-    return JSONResponse(status_code=500, content={"detail": "Internal Server Error"}, headers={"Access-Control-Allow-Origin": "*"})
+    return JSONResponse(status_code=500, content={"detail": str(exc)}, headers={"Access-Control-Allow-Origin": "*"})
 
 @app.get("/")
-def home(): return {"status": "System Online", "delta": len(symbol_cache["DELTA"]), "coindcx": len(symbol_cache["COINDCX"])}
+def home(): return {"status": "Online"}
 
-# --- THE FIX: SMART SYMBOL ROUTER ---
 @app.get("/data/symbols")
 async def get_symbols(broker: str = "DELTA"):
     b = broker.upper()
     if b not in symbol_cache: b = "DELTA"
     
-    # Lazy load if empty
+    # Lazy load if cache is suspiciously small
     if len(symbol_cache[b]) <= 4:
         if b == "DELTA": await refresh_delta_symbols()
         elif b == "COINDCX": await refresh_coindcx_symbols()
         
     return symbol_cache[b]
-# ------------------------------------
 
 @app.post("/auth/sync")
 def sync_user(user: schemas.UserCreate, db: Session = Depends(database.get_db)):
@@ -83,11 +85,7 @@ def sync_user(user: schemas.UserCreate, db: Session = Depends(database.get_db)):
 
 @app.post("/user/keys")
 def save_keys(keys: schemas.BrokerKeys, db: Session = Depends(database.get_db)):
-    updated = crud.update_broker_keys(db, keys)
-    if not updated:
-         new_user = schemas.UserCreate(email=keys.email, full_name="Trader", picture="")
-         crud.create_user(db, new_user)
-         crud.update_broker_keys(db, keys)
+    crud.update_broker_keys(db, keys)
     return {"status": "Keys Saved"}
 
 @app.post("/strategy/create")
@@ -106,13 +104,20 @@ def toggle_strategy(id: int, db: Session = Depends(database.get_db)):
     if strat:
         strat.is_running = not strat.is_running
         db.commit()
-    return {"status": "OK"}
+    return {"status": "OK", "is_running": strat.is_running if strat else False}
 
+# --- THE FIX: SAFE DELETE ---
 @app.delete("/strategies/{id}")
 def delete_strategy(id: int, db: Session = Depends(database.get_db)):
-    db.query(models.Strategy).filter(models.Strategy.id == id).delete()
+    # Query the single item first, then delete. This prevents the foreign key crash.
+    strat = db.query(models.Strategy).filter(models.Strategy.id == id).first()
+    if not strat:
+        raise HTTPException(status_code=404, detail="Strategy Not Found")
+    
+    db.delete(strat)
     db.commit()
     return {"status": "Deleted"}
+# ----------------------------
 
 @app.get("/strategies/{id}/logs")
 def get_logs(id: int, db: Session = Depends(database.get_db)):
@@ -130,14 +135,18 @@ def update_strategy(id: int, strat: schemas.StrategyInput, db: Session = Depends
         db.commit()
     return {"status": "Updated", "id": id}
 
+# --- THE FIX: COINDCX BACKTEST ROUTER ---
 @app.post("/strategy/backtest")
 async def run_backtest(strat: schemas.StrategyInput):
     tf = strat.logic.get('timeframe', '1h')
-    # Route history fetch to proper broker
+    
     if strat.broker.upper() == "COINDCX":
         df = await coindcx_manager.fetch_history(strat.symbol, tf, limit=3000)
     else:
         df = await backtester.fetch_historical_data(strat.symbol, tf, limit=3000)
         
-    if df.empty: return {"error": f"No data for {strat.symbol} on {strat.broker}"}
+    if df is None or df.empty: 
+        return {"error": f"No Market Data found for {strat.symbol} on {strat.broker}"}
+        
     return backtester.run_simulation(df, strat.logic)
+# ----------------------------------------
