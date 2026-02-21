@@ -341,7 +341,7 @@ function BuilderContent() {
                     )}
                     
                     <div className="h-80 w-full bg-slate-900 rounded-2xl border border-slate-700 p-4">
-                        <ResponsiveContainer width="100%" height="100%">
+                        <ResponsiveContainer width="100%" height={320}>
                             <LineChart data={backtestResult.equity}>
                                 <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                                 <XAxis dataKey="time" hide />
