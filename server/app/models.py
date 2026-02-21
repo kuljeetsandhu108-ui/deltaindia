@@ -10,11 +10,9 @@ class User(Base):
     full_name = Column(String)
     picture = Column(String)
     
-    # DELTA KEYS
+    # API KEYS
     delta_api_key = Column(String, nullable=True)
     delta_api_secret = Column(String, nullable=True)
-
-    # COINDCX KEYS (New)
     coindcx_api_key = Column(String, nullable=True)
     coindcx_api_secret = Column(String, nullable=True)
     
@@ -27,7 +25,7 @@ class Strategy(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String)
     symbol = Column(String)
-    broker = Column(String, default="DELTA") # 'DELTA' or 'COINDCX'
+    broker = Column(String, default="DELTA") # <--- THIS IS THE CRITICAL NEW COLUMN
     logic_configuration = Column(JSON)
     is_running = Column(Boolean, default=False)
     owner_id = Column(Integer, ForeignKey("users.id"))

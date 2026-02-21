@@ -1,5 +1,5 @@
 ﻿from pydantic import BaseModel
-from typing import Optional, Dict
+from typing import Optional, Dict, Any
 
 class UserCreate(BaseModel):
     email: str
@@ -8,7 +8,7 @@ class UserCreate(BaseModel):
 
 class BrokerKeys(BaseModel):
     email: str
-    broker: str # 'DELTA' or 'COINDCX'
+    broker: str 
     api_key: str
     api_secret: str
 
@@ -16,5 +16,5 @@ class StrategyInput(BaseModel):
     email: str
     name: str
     symbol: str
-    broker: str = "DELTA" # Added Broker Selection
-    logic: Dict
+    broker: str = "DELTA"
+    logic: Dict[str, Any]
