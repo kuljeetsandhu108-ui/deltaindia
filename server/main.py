@@ -5,17 +5,17 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+
 from app import models, database, schemas, crud
 from app.engine import engine as trading_engine
 from app.backtester import backtester
 from app.brokers.coindcx import coindcx_manager
 import ccxt.async_support as ccxt
 
-# --- DUAL CACHE ---
-# Default placeholders
+# CACHE
 symbol_cache = {
     "DELTA": ["BTC-USDT", "ETH-USDT"],
-    "COINDCX": ["BTCUSDT", "ETHUSDT"]
+    "COINDCX": ["BTCUSDT", "ETHUSDT"] # Start with fallback
 }
 
 async def refresh_delta_symbols():
@@ -31,16 +31,15 @@ async def refresh_delta_symbols():
 async def refresh_coindcx_symbols():
     global symbol_cache
     try:
-        print("Triggering CoinDCX Refresh...")
+        # Call the manager
         syms = await coindcx_manager.fetch_symbols()
-        if syms and len(syms) > 5:
+        # Only update if we got a real list (more than 2 defaults)
+        if syms and len(syms) > 2:
             symbol_cache["COINDCX"] = syms
-            print(f"Cache Updated: {len(syms)} CoinDCX pairs")
     except Exception as e: print(f"CoinDCX Init Error: {e}")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
     asyncio.create_task(refresh_delta_symbols())
     asyncio.create_task(refresh_coindcx_symbols())
     asyncio.create_task(trading_engine.start())
@@ -55,21 +54,17 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, 
 @app.get("/")
 def home(): return {"status": "Online"}
 
-# --- SMART SYMBOL ENDPOINT ---
 @app.get("/data/symbols")
 async def get_symbols(broker: str = "DELTA"):
     b = broker.upper()
     if b not in symbol_cache: b = "DELTA"
     
-    current_list = symbol_cache.get(b, [])
-    
-    # IF LIST IS DEFAULT/SMALL, FORCE REFRESH NOW
-    if len(current_list) <= 5:
+    # FORCE REFRESH IF LIST IS SMALL
+    if len(symbol_cache[b]) <= 2:
         if b == "DELTA": await refresh_delta_symbols()
         elif b == "COINDCX": await refresh_coindcx_symbols()
         
-    return symbol_cache.get(b, [])
-# -----------------------------
+    return symbol_cache[b]
 
 @app.post("/auth/sync")
 def sync_user(user: schemas.UserCreate, db: Session = Depends(database.get_db)):
@@ -79,11 +74,7 @@ def sync_user(user: schemas.UserCreate, db: Session = Depends(database.get_db)):
 
 @app.post("/user/keys")
 def save_keys(keys: schemas.BrokerKeys, db: Session = Depends(database.get_db)):
-    updated = crud.update_broker_keys(db, keys)
-    if not updated:
-         new_user = schemas.UserCreate(email=keys.email, full_name="Trader", picture="")
-         crud.create_user(db, new_user)
-         crud.update_broker_keys(db, keys)
+    crud.update_broker_keys(db, keys)
     return {"status": "Keys Saved"}
 
 @app.post("/strategy/create")
@@ -102,7 +93,7 @@ def toggle_strategy(id: int, db: Session = Depends(database.get_db)):
     if strat:
         strat.is_running = not strat.is_running
         db.commit()
-    return {"status": "OK"}
+    return {"status": "OK", "is_running": strat.is_running}
 
 @app.delete("/strategies/{id}")
 def delete_strategy(id: int, db: Session = Depends(database.get_db)):
@@ -133,5 +124,5 @@ async def run_backtest(strat: schemas.StrategyInput):
         df = await coindcx_manager.fetch_history(strat.symbol, tf, limit=3000)
     else:
         df = await backtester.fetch_historical_data(strat.symbol, tf, limit=3000)
-    if df.empty: return {"error": f"No data for {strat.symbol} on {strat.broker}"}
+    if df.empty: return {"error": f"No data for {strat.symbol}"}
     return backtester.run_simulation(df, strat.logic)
