@@ -6,3 +6,7 @@ __pycache__/
 .next/
 dist/
 postgres_data/
+server/vault/
+*.parquet
+leverage_cache.json
+coindcx_verified.json

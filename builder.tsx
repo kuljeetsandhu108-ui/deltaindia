@@ -1,0 +1,573 @@
+﻿"use client";
+
+import { useState, useEffect, Suspense } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { ArrowLeft, Play, Plus, Trash2, Zap, AlertTriangle, Search, Settings2, Save, BarChart2, Clock, List, TrendingUp, Activity, DollarSign, Sparkles, Loader2, Bot } from 'lucide-react';
+import Link from 'next/link';
+import { useSession } from 'next-auth/react';
+import { INDICATORS } from '@/lib/indicators';
+import { useSearchParams, useRouter } from 'next/navigation';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+
+  const IndicatorSelect = ({ side, data, onChange, onParamChange }: any) => {
+    if (!data || !data.type) return <div className="text-red-500 text-xs p-2">Invalid Data</div>;
+    const selectedDef = INDICATORS.find(i => i.value === data.type);
+    
+    return (
+        <div className="flex flex-col gap-2 bg-slate-950 p-3 rounded-lg border border-slate-700 min-w-[250px]">
+            <div className="relative">
+                <select className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-sm appearance-none outline-none focus:border-emerald-500" value={data.type} onChange={(e) => onChange('type', e.target.value)}>
+                    {INDICATORS.map(ind => (<option key={ind.value} value={ind.value}>{ind.label}</option>))}
+                </select>
+                <div className="absolute right-3 top-2.5 pointer-events-none text-slate-500"><Search size={14}/></div>
+            </div>
+            {selectedDef && selectedDef.params && selectedDef.params.length > 0 && (
+                <div className="grid grid-cols-2 gap-2 mt-1">
+                    {selectedDef.params.map((p: any) => (
+                        <div key={p.name}>
+                            <label className="text-[10px] text-slate-500 uppercase">{p.name}</label>
+                            <input 
+                              type={p.name === 'source' ? 'text' : 'number'} step="any" 
+                              className="w-full bg-black/30 border border-slate-800 rounded px-2 py-1 text-xs text-cyan-400" 
+                              value={data.params?.[p.name] || ''} 
+                              onChange={(e) => onParamChange(p.name, e.target.value)} 
+                            />
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+  };
+
+
+function BuilderContent() {
+  const { data: session } = useSession();
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const editId = searchParams.get('edit'); 
+
+  // --- STATE VARIABLES ---
+  const [strategyName, setStrategyName] = useState("My Pro Algo");
+  const[broker, setBroker] = useState("COINDCX");
+  const [side, setSide] = useState("BUY");
+  const [tradeMode, setTradeMode] = useState("PAPER");
+  const [walletPct, setWalletPct] = useState(10);
+  const [leverage, setLeverage] = useState(1);
+  const [maxLeverage, setMaxLeverage] = useState(100);
+  const [symbol, setSymbol] = useState("BTCUSDT");
+  const [timeframe, setTimeframe] = useState("1h");
+  const [quantity, setQuantity] = useState(1);
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [stopLoss, setStopLoss] = useState(1.0);
+  const [takeProfit, setTakeProfit] = useState(2.0);
+  const[tsl, setTsl] = useState(0.0);
+  
+  const [symbolList, setSymbolList] = useState<string[]>([]);
+  
+  const [conditions, setConditions] = useState<any[]>([
+    { id: 1, left: { type: 'rsi', params: { length: 14 } }, operator: 'LESS_THAN', right: { type: 'number', params: { value: 30 } } }
+  ]);
+  
+  const [backtestLoading, setBacktestLoading] = useState(false);
+  const [backtestResult, setBacktestResult] = useState<any>(null);
+
+  // --- AI STATE ---
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [isGenerating, setIsGenerating] = useState(false);
+
+  
+  useEffect(() => {
+    const fetchSymbols = async () => {
+        try {
+            setSymbolList([]); 
+            const res = await fetch(`https://api.algoease.com/data/symbols?broker=${broker}`);
+            if (res.ok) {
+                const data = await res.json();
+                if (data && data.length > 0) {
+                    setSymbolList(data);
+                    if (!editId) {
+                        // 🛡️ STABILITY GUARD: Only set symbol if it's not already in the list
+                        const currentSymbol = symbol;
+                        if (!data.includes(currentSymbol)) {
+                            const clean = currentSymbol.toUpperCase().replace(/[^A-Z0-9]/gi, '');
+                            const exact = data.find((s: string) => s.replace(/[^A-Z0-9]/gi, '') === clean);
+                            if (exact) setSymbol(exact);
+                            else setSymbol(data[0]);
+                        }
+                    }
+                }
+            }
+        } catch(e) {}
+    };
+    fetchSymbols();
+  }, [broker, editId]);
+
+  // FETCH EXISTING STRATEGY IF EDITING
+  useEffect(() => {
+    if (editId && session?.user?.email) {
+        const fetchDetails = async () => {
+            try {
+                const apiUrl = "https://api.algoease.com";
+                const res = await fetch(apiUrl + '/strategy/' + editId);
+                if(res.ok) {
+                    const data = await res.json();
+                    setStrategyName(data.name); 
+                    setSymbol(data.symbol);
+                    setBroker(data.broker || "DELTA");
+                    
+                    const logic = data.logic_configuration || {};
+                    setSide(logic.side || "BUY");
+                    setTradeMode(logic.tradeMode || "PAPER");
+                    setWalletPct(logic.walletPct || 10);
+                    setLeverage(logic.leverage || 1);
+                    setTimeframe(logic.timeframe || "1h"); 
+                    setQuantity(logic.quantity || 1);
+                    setStopLoss(logic.sl || 0); 
+                    setTakeProfit(logic.tp || 0);
+                    setTsl(logic.tsl || 0);
+                    
+                    const safeConditions = (logic.conditions ||[]).map((c: any) => ({
+                        id: c.id || Math.random(),
+                        left: c.left || { type: 'close', params: {} },
+                        operator: c.operator || 'GREATER_THAN',
+                        right: c.right || { type: 'number', params: { value: 0 } }
+                    }));
+                    if (safeConditions.length > 0) setConditions(safeConditions);
+                }
+            } catch (e) { console.error(e); }
+        };
+        fetchDetails();
+    }
+  }, [editId, session]);
+
+  // --- AI GENERATOR FUNCTION ---
+  const handleAIGenerate = async () => {
+    if (!aiPrompt) return;
+    setIsGenerating(true);
+    try {
+        const res = await fetch('/api/generate-strategy', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt: aiPrompt })
+        });
+        
+        const data = await res.json();
+        
+        if (data.error) {
+            alert("AI Error: " + data.error);
+        } else {
+            // Apply AI Data
+            setStrategyName(data.strategyName || "AI Strategy");
+                        if (data.symbol) {
+                let s = data.symbol.toUpperCase();
+                if (s.includes('BITCOIN')) s = 'BTCUSDT';
+                if (s.includes('ETHEREUM')) s = 'ETHUSDT';
+                if (s.includes('SOLANA')) s = 'SOLUSDT';
+                setSymbol(s);
+            }
+            if (data.timeframe) setTimeframe(data.timeframe);
+            if (data.quantity) setQuantity(data.quantity);
+            if (data.sl !== undefined) setStopLoss(data.sl);
+            if (data.tp !== undefined) setTakeProfit(data.tp);
+            if (data.tsl !== undefined) setTsl(data.tsl);
+            if (data.broker) setBroker(data.broker);
+            if (data.side) setSide(data.side.toUpperCase());
+            if (data.tradeMode) setTradeMode(data.tradeMode.toUpperCase());
+            if (data.walletPct) setWalletPct(data.walletPct);
+            if (data.leverage) {
+                const maxL = (data.broker || broker) === 'COINDCX' ? 20 : 100;
+                setLeverage(data.leverage > maxL ? maxL : data.leverage);
+            }
+            if (data.side) setSide(data.side.toUpperCase()); 
+            
+            if (data.conditions && data.conditions.length > 0) {
+                const mappedConds = data.conditions.map((c: any, index: number) => ({
+                    id: Date.now() + index,
+                    left: c.left || { type: 'close', params: {} },
+                    operator: c.operator || 'GREATER_THAN',
+                    right: c.right || { type: 'number', params: { value: 0 } }
+                }));
+                setConditions(mappedConds);
+            }
+            setAiPrompt(""); 
+        }
+    } catch (e) {
+        alert("Failed to communicate with AI.");
+    }
+    setIsGenerating(false);
+  };
+
+  const addCondition = () => { 
+    setConditions([...conditions, { id: Date.now(), left: { type: 'rsi', params: { length: 14 } }, operator: 'LESS_THAN', right: { type: 'number', params: { value: 30 } } }]); 
+  };
+  
+  const removeCondition = (id: number) => { 
+    setConditions(conditions.filter(c => c.id !== id)); 
+  };
+
+  const updateCondition = (id: number, side: 'left' | 'right', field: string, val: any) => { 
+    setConditions(conditions.map(c => { 
+        if (c.id !== id) return c; 
+        if (field === 'type') { 
+            const ind = INDICATORS.find(i => i.value === val); 
+            const defaultParams: any = {}; 
+            if (ind && ind.params) {
+                ind.params.forEach(p => { defaultParams[p.name] = p.def; }); 
+            }
+            return { ...c, [side]: { type: val, params: defaultParams } }; 
+        } 
+        return { ...c, [side]: { ...c[side], [field]: val } }; 
+    })); 
+  };
+
+  const updateParam = (id: number, side: 'left' | 'right', paramName: string, val: any) => { 
+    setConditions(conditions.map(c => { 
+        if (c.id !== id) return c; 
+        const sideData: any = side === 'left' ? c.left : c.right;
+        const newSide = { ...sideData, params: { ...sideData.params, [paramName]: val } };
+        return { ...c, [side]: newSide }; 
+    })); 
+  };
+
+  const handleDeploy = async () => {
+    if (!session?.user?.email) return alert("Please login first");
+    const payload = { 
+      email: session.user.email, 
+      name: strategyName, 
+      symbol, 
+      broker,
+      logic: { conditions, timeframe, walletPct: Number(walletPct), leverage: Number(leverage), sl: Number(stopLoss), tp: Number(takeProfit), tsl: Number(tsl), side, tradeMode, startDate, endDate, state: "WAITING" } 
+    };
+    try {
+      const apiUrl = "https://api.algoease.com";
+      let url = apiUrl + '/strategy/create'; 
+      let method = 'POST';
+      if (editId) { 
+          url = apiUrl + '/strategy/' + editId; 
+          method = 'PUT'; 
+      }
+      const res = await fetch(url, { method: method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      if(res.ok) { 
+          alert(editId ? "✅ STRATEGY UPDATED!" : "🚀 STRATEGY DEPLOYED!"); 
+          router.push('/dashboard'); 
+      } else { 
+          alert("Operation Failed"); 
+      }
+    } catch (e) { alert("Server Error."); }
+  };
+
+  const handleBacktest = async () => {
+    setBacktestLoading(true); 
+    setBacktestResult(null);
+    const payload = { 
+      email: session?.user?.email || "test", 
+      name: strategyName, 
+      symbol, 
+      broker,
+      logic: { conditions, timeframe, walletPct: Number(walletPct), leverage: Number(leverage), sl: Number(stopLoss), tp: Number(takeProfit), tsl: Number(tsl), side, tradeMode, startDate, endDate, state: "WAITING" } 
+    };
+    try {
+        const apiUrl = "https://api.algoease.com";
+        const res = await fetch(apiUrl + '/strategy/backtest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        const data = await res.json();
+        if (data.error) { 
+            alert("Error: " + data.error); 
+        } else { 
+            setBacktestResult(data); 
+        }
+    } catch(e) { alert("Backtest Failed"); }
+    setBacktestLoading(false);
+  };
+
+  const formatIST = (isoString: string) => { 
+      try { 
+          let dStr = isoString;
+          // Force JavaScript to recognize the raw Pandas timestamp as UTC
+          if (!dStr.endsWith('Z') && !dStr.includes('+')) dStr += 'Z';
+          
+          const date = new Date(dStr);
+          return date.toLocaleString('en-IN', { 
+              timeZone: 'Asia/Kolkata', 
+              day: '2-digit', month: 'short', year: 'numeric', 
+              hour: '2-digit', minute: '2-digit', hour12: true 
+          }); 
+      } catch { return "-"; } 
+  };
+  
+  const formatPrice = (p: any) => {
+      if (p === undefined || p === null || isNaN(Number(p))) return "0.00";
+      const val = Number(p);
+      if (Math.abs(val) < 0.0001) return val.toFixed(8);
+      if (Math.abs(val) < 1) return val.toFixed(4);
+      return val.toFixed(2);
+  };
+
+  return (
+    <div className="grid grid-cols-1 xl:grid-cols-4 gap-8 pb-20">
+        
+        {/* --- 🌟 THE AI MAGIC BOX (NOW ACTUALLY IN THE UI) 🌟 --- */}
+        <div className="col-span-1 lg:col-span-4 bg-gradient-to-r from-indigo-900/50 to-purple-900/50 p-6 rounded-2xl border border-indigo-500/30 shadow-lg">
+            <div className="flex flex-col md:flex-row gap-4 items-center">
+                <div className="p-3 bg-indigo-500/20 rounded-full text-indigo-300">
+                    <Bot size={24} />
+                </div>
+                <div className="flex-1 w-full">
+                    <h3 className="text-xl font-bold text-white flex items-center gap-2 mb-2">
+                       Strategy AI Assistant <span className="text-xs bg-indigo-500 px-2 py-0.5 rounded text-white">BETA</span>
+                    </h3>
+                    <textarea 
+                        value={aiPrompt}
+                        onChange={(e) => setAiPrompt(e.target.value)}
+                        placeholder="e.g. 'Build a scalping strategy for BTC on CoinDCX. Buy when RSI is below 30. Stop Loss 1%, Take Profit 2%.'"
+                        className="w-full bg-slate-950/80 border border-slate-700 rounded-xl p-4 text-sm text-white focus:border-indigo-500 outline-none resize-none h-20 placeholder:text-slate-600 shadow-inner"
+                    />
+                </div>
+                <button 
+                    onClick={handleAIGenerate} 
+                    disabled={isGenerating || !aiPrompt}
+                    className="w-full md:w-auto h-20 px-8 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+                >
+                    {isGenerating ? <Loader2 className="animate-spin" size={20} /> : <Sparkles size={20} />}
+                    {isGenerating ? "Thinking..." : "Generate"}
+                </button>
+            </div>
+        </div>
+        {/* --- END AI BOX --- */}
+
+        {/* SETTINGS PANEL */}
+        <div className="col-span-1 space-y-6">
+          <div className="bg-slate-900 p-6 rounded-xl border border-slate-800">
+            <h3 className="text-lg font-semibold mb-4 text-cyan-400 flex items-center gap-2"><Zap size={18} /> Asset</h3>
+            <div className="space-y-4">
+                <div>
+                  <label className="block text-sm text-slate-400 mb-1">Name</label>
+                  <input type="text" value={strategyName} onChange={(e) => setStrategyName(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded p-2 outline-none focus:border-cyan-500" />
+                </div>
+                
+                <div>
+                    <label className="block text-sm text-slate-400 mb-1">Pair ({symbolList.length})</label>
+                    <select value={symbol} onChange={(e) => setSymbol(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded p-2 outline-none">
+                        {symbolList.length > 0 ? symbolList.map(s => (<option key={s} value={s}>{s}</option>)) : <option value="BTCUSDT">Loading...</option>}
+                    </select>
+                </div>
+                <div>
+                    <label className="block text-sm text-slate-400 mb-1 flex items-center gap-2"><Clock size={12}/> Timeframe</label>
+                    <select value={timeframe} onChange={(e) => setTimeframe(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded p-2 outline-none">
+                        
+                        <option value="5m">5 Min</option>
+                        <option value="15m">15 Min</option>
+                        <option value="1h">1 Hour</option>
+                        <option value="4h">4 Hour</option>
+                        <option value="1d">1 Day</option></select></div>
+            <div className="grid grid-cols-2 gap-2 mt-4 bg-slate-900/50 p-3 rounded-lg border border-slate-800">
+                <div>
+                    <label className="block text-[10px] text-slate-500 uppercase font-bold mb-1">From Date</label>
+                    <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded p-1 text-xs text-white outline-none focus:border-cyan-500" />
+                </div>
+                <div>
+                    <label className="block text-[10px] text-slate-500 uppercase font-bold mb-1">To Date</label>
+                    <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded p-1 text-xs text-white outline-none focus:border-cyan-500" />
+                </div>
+            </div><div style={{display:"none"}}><select>
+                    </select>
+                </div>
+            </div>
+          </div>
+          
+          <div className="bg-slate-900 p-6 rounded-xl border border-slate-800">
+            <h3 className="text-lg font-semibold mb-4 text-orange-400 flex items-center gap-2"><AlertTriangle size={18} /> Risk</h3>
+            <div className="space-y-4">
+                <div>
+                    <label className="block text-sm text-slate-400 mb-1 flex items-center gap-2">Action Direction</label>
+                    <select value={side} onChange={(e) => setSide(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded p-2 outline-none font-bold text-blue-400">
+                        <option value="BUY">LONG (Buy)</option>
+                        <option value="SELL">SHORT (Sell)</option>
+                    </select>
+                </div>
+                
+                                <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <div className="flex justify-between items-end mb-1">
+                         <label className="block text-sm text-slate-400">Leverage (x)</label>
+                         <span className="text-[10px] text-slate-500 font-mono bg-slate-900 px-2 py-0.5 rounded">Max {maxLeverage}x</span>
+                      </div>
+                      <select value={leverage} onChange={(e) => setLeverage(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-700 rounded p-2 outline-none text-yellow-400 font-bold transition-all focus:border-yellow-500 cursor-pointer">
+                          {[1, 2, 3, 4, 5, 10, 15, 20, 25, 50, 75, 100].filter(l => l <= maxLeverage).map(l => (
+                              <option key={l} value={l}>{l}x</option>
+                          ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm text-slate-400 mb-1">% of Wallet</label>
+                      <input type="number" value={walletPct} onChange={(e) => setWalletPct(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-700 rounded p-2 outline-none text-cyan-400 font-bold" />
+                    </div>
+                </div>
+                <div className="grid grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-sm text-red-400 mb-1">SL %</label>
+                      <input type="number" step="0.1" value={stopLoss} onChange={(e) => setStopLoss(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-700 rounded p-2 outline-none" />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-emerald-400 mb-1">TP %</label>
+                      <input type="number" step="0.1" value={takeProfit} onChange={(e) => setTakeProfit(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-700 rounded p-2 outline-none" />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-purple-400 mb-1">Trailing %</label>
+                      <input type="number" step="0.1" value={tsl} onChange={(e) => setTsl(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-700 rounded p-2 outline-none" />
+                    </div>
+                </div>
+            </div>
+          </div>
+          
+          <div className="flex flex-col gap-3">
+              <button onClick={handleBacktest} disabled={backtestLoading} className="w-full py-4 bg-slate-800 border border-slate-600 rounded-lg font-bold flex items-center justify-center gap-2 hover:bg-slate-700 transition-all">
+                  {backtestLoading ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div> : <BarChart2 size={18} />} Run Simulation
+              </button>
+              <button onClick={handleDeploy} className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg hover:shadow-indigo-500/30"><Save size={20} /> {editId ? "Update Strategy" : "Save Strategy"}</button>
+          </div>
+        </div>
+
+        {/* LOGIC BUILDER */}
+        <div className="col-span-1 xl:col-span-3 space-y-4">
+            <h3 className="text-lg font-semibold text-emerald-400 flex items-center gap-2"><Settings2 size={18}/> Entry Logic</h3>
+            <div className="space-y-4">
+                {conditions.map((c, i) => (
+                    <motion.div key={c.id} initial={{opacity:0, y:10}} animate={{opacity:1, y:0}} className="flex flex-col lg:flex-row items-center gap-4 bg-slate-900 p-4 rounded-xl border border-slate-800 relative">
+                        <div className="text-slate-500 font-bold bg-slate-800 w-10 h-10 rounded-full flex items-center justify-center shrink-0">{i === 0 ? 'IF' : 'AND'}</div>
+                        
+                        <IndicatorSelect data={c.left} onChange={(f: string, v: any) => updateCondition(c.id, 'left', f, v)} onParamChange={(p: string, v: any) => updateParam(c.id, 'left', p, v)} />
+                        
+                        <select 
+                          className="bg-slate-950 text-emerald-400 font-bold border border-slate-700 rounded px-3 py-2 outline-none" 
+                          value={c.operator} 
+                          onChange={(e) => { 
+                            const newConds = [...conditions]; 
+                            const target = newConds.find(x => x.id === c.id);
+                            if (target) target.operator = e.target.value; 
+                            setConditions(newConds); 
+                          }}
+                        >
+                            <option value="CROSSES_ABOVE">Crosses Above</option>
+                            <option value="CROSSES_BELOW">Crosses Below</option>
+                            <option value="GREATER_THAN">Greater Than</option>
+                            <option value="LESS_THAN">Less Than</option>
+                            <option value="EQUALS">Equals</option>
+                        </select>
+
+                        <IndicatorSelect data={c.right} onChange={(f: string, v: any) => updateCondition(c.id, 'right', f, v)} onParamChange={(p: string, v: any) => updateParam(c.id, 'right', p, v)} />
+                        
+                        <button onClick={() => removeCondition(c.id)} className="absolute top-2 right-2 text-slate-600 hover:text-red-400"><Trash2 size={16}/></button>
+                    </motion.div>
+                ))}
+            </div>
+            
+            <button onClick={addCondition} className="w-full py-4 border-2 border-dashed border-slate-800 rounded-xl text-slate-600 hover:text-white hover:border-slate-500 flex items-center justify-center gap-2 transition-all">
+              <Plus size={20} /> Add Logic Block
+            </button>
+            
+            {/* BACKTEST RESULTS & AUDIT REPORT */}
+            {backtestResult && (
+                <motion.div initial={{opacity:0, y:20}} animate={{opacity:1, y:0}} className="mt-8 space-y-6">
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                        <div className="bg-slate-900 p-5 rounded-2xl border border-slate-700"><div className="text-slate-500 text-xs uppercase mb-1 flex items-center gap-1"><DollarSign size={12}/> Balance</div><div className="text-3xl font-bold text-white">${backtestResult.metrics.final_balance}</div></div>
+                        <div className="bg-slate-900 p-5 rounded-2xl border border-slate-700"><div className="text-slate-500 text-xs uppercase mb-1 flex items-center gap-1"><Activity size={12}/> Return</div><div className={'text-3xl font-bold ' + (backtestResult.metrics.total_return_pct >= 0 ? 'text-emerald-400' : 'text-red-400')}>{backtestResult.metrics.total_return_pct}%</div></div>
+                        <div className="bg-slate-900 p-5 rounded-2xl border border-slate-700"><div className="text-slate-500 text-xs uppercase mb-1 flex items-center gap-1"><TrendingUp size={12}/> Win Rate</div><div className="text-3xl font-bold text-blue-400">{backtestResult.metrics.win_rate}%</div></div>
+                        <div className="bg-slate-900 p-5 rounded-2xl border border-slate-700"><div className="text-slate-500 text-xs uppercase mb-1 flex items-center gap-1"><List size={12}/> Trades</div><div className="text-3xl font-bold text-white">{backtestResult.metrics.total_trades}</div></div>
+                    </div>
+                    
+                    {backtestResult.metrics.audit && (
+                        <div className="space-y-4 mb-6">
+                            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                                <div className="bg-slate-900 p-4 rounded-xl border border-slate-800"><div className="text-slate-500 text-xs uppercase">Max Drawdown</div><div className="text-lg font-bold text-red-400">{backtestResult.metrics.audit.max_drawdown}%</div></div>
+                                <div className="bg-slate-900 p-4 rounded-xl border border-slate-800"><div className="text-slate-500 text-xs uppercase">Sharpe Ratio</div><div className="text-lg font-bold text-white">{backtestResult.metrics.audit.sharpe_ratio} <span className="text-indigo-400 text-sm">/ {backtestResult.metrics.audit.sortino_ratio || "0"} (Sort)</span></div></div>
+                                <div className="bg-slate-900 p-4 rounded-xl border border-slate-800"><div className="text-slate-500 text-xs uppercase">Profit Factor</div><div className="text-lg font-bold text-emerald-400">{backtestResult.metrics.audit.profit_factor}</div></div>
+                                <div className="bg-slate-900 p-4 rounded-xl border border-slate-800"><div className="text-slate-500 text-xs uppercase">Expectancy</div><div className="text-lg font-bold text-white">${backtestResult.metrics.audit.expectancy}</div></div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 flex justify-between items-center"><div className="text-slate-500 text-xs uppercase">Max Consecutive Losses</div><div className="text-lg font-bold text-orange-400">{backtestResult.metrics.audit.max_cons_losses} Trades</div></div>
+                                <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 flex justify-between items-center"><div className="text-slate-500 text-xs uppercase">Avg Trade Duration</div><div className="text-lg font-bold text-blue-400">{backtestResult.metrics.audit.avg_duration}</div></div>
+                            </div>
+                        </div>
+                    )}
+                    
+                    {backtestResult.metrics.start_date && (
+                        <div className="bg-indigo-900/40 border border-indigo-500/50 text-indigo-200 px-6 py-3 rounded-xl text-sm font-bold flex justify-center items-center gap-2 mb-6 shadow-lg shadow-indigo-900/20">
+                            <span>📅 Certified Data Span:</span> 
+                            <span className="text-white">{formatIST(backtestResult.metrics.start_date)}</span> 
+                            <span className="text-indigo-400">to</span> 
+                            <span className="text-white">{formatIST(backtestResult.metrics.end_date)}</span>
+                        </div>
+                    )}
+                    <div className="h-80 w-full bg-slate-900 rounded-2xl border border-slate-700 p-4">
+                        <ResponsiveContainer width="100%" height={320}>
+                            <LineChart data={backtestResult.equity}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                                <XAxis dataKey="time" hide />
+                                <YAxis domain={['auto', 'auto']} stroke="#94a3b8" fontSize={10} />
+                                <Tooltip contentStyle={{backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '8px'}} />
+                                <Legend />
+                                <Line name="Strategy Equity" type="monotone" dataKey="balance" stroke="#3b82f6" strokeWidth={2} dot={false} />
+                                <Line name="Buy & Hold" type="monotone" dataKey="buy_hold" stroke="#eab308" strokeWidth={2} dot={false} />
+                            </LineChart>
+                        </ResponsiveContainer>
+                    </div>
+
+                    <div className="bg-slate-900 rounded-2xl border border-slate-700 overflow-hidden">
+                        <div className="p-4 border-b border-slate-700 font-bold flex items-center gap-2 bg-slate-800/50"><List size={18}/> Comprehensive Trade Ledger (IST)</div>
+                        <div className="max-h-96 overflow-auto">
+                            <table className="min-w-[800px] w-full text-sm text-left">
+                                <thead className="text-xs text-slate-400 uppercase bg-slate-950 sticky top-0">
+                                    <tr>
+                                        <th className="px-6 py-3">Entry Time</th>
+                                        <th className="px-6 py-3">Buy Price</th>
+                                        <th className="px-6 py-3">Exit Time</th>
+                                        <th className="px-6 py-3">Sell Price</th>
+                                        <th className="px-6 py-3">Result</th>
+                                        <th className="px-6 py-3 text-right">PnL</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {backtestResult.trades.map((t: any, i: number) => (
+                                        <tr key={i} className="border-b border-slate-800/50 hover:bg-slate-800/30 transition-colors">
+                                            <td className="px-6 py-4 text-slate-400 text-xs">{formatIST(t.entry_time)}</td>
+                                            <td className="px-6 py-4 font-mono text-emerald-400">${formatPrice(t.entry_price)}</td>
+                                            <td className="px-6 py-4 text-slate-400 text-xs">{formatIST(t.exit_time)}</td>
+                                            <td className="px-6 py-4 font-mono text-red-400">${formatPrice(t.exit_price)}</td>
+                                            <td className="px-6 py-4">
+                                                <span className={`px-2 py-1 rounded text-xs font-bold ${t.pnl > 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
+                                                    {t.reason || (t.pnl > 0 ? 'WIN' : 'LOSS')}
+                                                </span>
+                                            </td>
+                                            <td className={`px-6 py-4 text-right font-mono font-bold ${t.pnl > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                                {(t.pnl > 0 ? '+' : '') + '$' + formatPrice(t.pnl)}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </motion.div>
+            )}
+        </div>
+    </div>
+  );
+}
+
+export default function StrategyBuilder() {
+  return (
+    <div className="min-h-screen bg-slate-950 text-white p-6">
+      <header className="flex justify-between items-center mb-8 border-b border-slate-800 pb-6">
+        <div className="flex items-center gap-4">
+            <Link href="/dashboard" className="p-2 hover:bg-slate-900 rounded-lg transition-colors"><ArrowLeft size={24} className="text-slate-400" /></Link>
+            <div><h1 className="text-2xl font-bold flex items-center gap-2">Logic Builder</h1></div>
+        </div>
+      </header>
+      <Suspense fallback={<div className="text-slate-500 flex justify-center py-20 animate-pulse">Loading Builder Environment...</div>}>
+          <BuilderContent />
+      </Suspense>
+    </div>
+  );
+}
