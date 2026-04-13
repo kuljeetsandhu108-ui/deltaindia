@@ -17,7 +17,7 @@ export default function Dashboard() {
   const fetchStrategies = async () => {
     try {
       // Hardcoded Secure URL
-      const res = await fetch("https://api.algoease.com/strategies/" + session?.user?.email);
+      const res = await fetch("https://api-staging.algoease.com/strategies/" + session?.user?.email);
       const data = await res.json();
       setStrategies(data);
     } catch (e) { console.error("Error fetching strategies"); }
@@ -27,7 +27,7 @@ export default function Dashboard() {
   const handleDelete = async (id: number) => {
     if(!confirm("Delete this research strategy?")) return;
     try {
-      const res = await fetch("https://api.algoease.com/strategies/" + id, { method: 'DELETE' });
+      const res = await fetch("https://api-staging.algoease.com/strategies/" + id, { method: 'DELETE' });
       if (res.ok) setStrategies(strategies.filter((s: any) => s.id !== id));
     } catch (e) { alert("Network Error"); }
   };

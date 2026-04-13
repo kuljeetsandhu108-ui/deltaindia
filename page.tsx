@@ -81,7 +81,7 @@ function BuilderContent() {
   useEffect(() => {
     const fetchSymbols = async () => {
         try {
-            const res = await fetch(`https://api.algoease.com/data/symbols`);
+            const res = await fetch(`https://api-staging.algoease.com/data/symbols`);
             if (res.ok) {
                 const data = await res.json();
                 if (data && data.length > 0) {
@@ -107,7 +107,7 @@ function BuilderContent() {
     if (editId && session?.user?.email) {
         const fetchDetails = async () => {
             try {
-                const apiUrl = "https://api.algoease.com";
+                const apiUrl = "https://api-staging.algoease.com";
                 const res = await fetch(apiUrl + '/strategy/' + editId);
                 if(res.ok) {
                     const data = await res.json();
@@ -188,7 +188,7 @@ function BuilderContent() {
                                                 const fixParams = (item: any) => {
                             if (!item.params) item.params = {};
                             const p = item.params;
-                            if (['ema','sma','rsi','vwap','atr','adx','cci','roc'].includes(item.type) && !p.length) p.length = 14;
+                            if (['ema','sma','rsi','vwap','atr','adx','cci','roc','donchian_upper','donchian_lower','aroon_up','aroon_down','hma','williams_r'].includes(item.type) && !p.length) p.length = 14;
                             if (item.type === 'macd') {
                                 if (!p.fast) p.fast = 12;
                                 if (!p.slow) p.slow = 26;
@@ -259,7 +259,7 @@ function BuilderContent() {
       logic: { conditions, timeframe, walletPct: Number(walletPct), leverage: Number(leverage), sl: Number(stopLoss), tp: Number(takeProfit), tsl: Number(tsl), side, tradeMode, startDate, endDate, state: "WAITING" } 
     };
     try {
-      const apiUrl = "https://api.algoease.com";
+      const apiUrl = "https://api-staging.algoease.com";
       let url = apiUrl + '/strategy/create'; 
       let method = 'POST';
       if (editId) { 
@@ -287,7 +287,7 @@ function BuilderContent() {
       logic: { conditions, timeframe, walletPct: Number(walletPct), leverage: Number(leverage), sl: Number(stopLoss), tp: Number(takeProfit), tsl: Number(tsl), side, tradeMode, startDate, endDate, state: "WAITING" } 
     };
     try {
-        const apiUrl = "https://api.algoease.com";
+        const apiUrl = "https://api-staging.algoease.com";
         const res = await fetch(apiUrl + '/strategy/backtest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
         const data = await res.json();
         if (data.error) { 

@@ -20,7 +20,7 @@ export default function BrokerSettings() {
       setIsPinging(true);
       setHealthData(null);
       try {
-          const apiUrl = "https://api.algoease.com";
+          const apiUrl = "https://api-staging.algoease.com";
           const res = await fetch(apiUrl + '/system/diagnostics');
           const data = await res.json();
           setHealthData(data);
@@ -33,7 +33,7 @@ export default function BrokerSettings() {
   const handleSave = async (broker: string) => {
     if (!session?.user?.email) return alert("Please log in first.");
     try {
-      const apiUrl = "https://api.algoease.com";
+      const apiUrl = "https://api-staging.algoease.com";
       const payload = {
           email: session.user.email,
           broker: broker.toUpperCase(),

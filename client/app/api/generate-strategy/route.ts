@@ -49,13 +49,22 @@ export async function POST(req: Request) {
     Whenever you use an indicator, you MUST include its exact params object so the engine doesn't fail.
     - 'sma', 'ema', 'wma' -> params: { "length": number }
     - 'rsi' -> params: { "length": number }
+        - 'tsi' -> params: { "long_length": 25, "short_length": 13 }
+    - 'uo' -> params: { "fast": 7, "mid": 14, "slow": 28 }
+        - 'ppo' -> params: { "fast": 12, "slow": 26 }
+    - 'cmf' -> params: { "length": 20 }
     - 'macd' -> params: { "fast": 12, "slow": 26, "sig": 9 }
+    - 'supertrend' -> params: { "length": 10, "multiplier": 3.0 }
+        - 'tsi' -> params: { "long_length": 25, "short_length": 13 }
+    - 'uo' -> params: { "fast": 7, "mid": 14, "slow": 28 }
+    - 'psar' -> params: { "step": 0.02, "max_step": 0.2 }
+    - 'keltner_upper', 'keltner_lower' -> params: { "length": 20, "multiplier": 2.0 }
     - 'bb_upper', 'bb_lower' -> params: { "length": 20, "std": 2.0 }
     - 'atr' -> params: { "length": 14 }
     - 'vwap' -> params: { "length": 14 }
-    - 'adx', 'cci', 'roc' -> params: { "length": 14 }
+    - 'adx', 'cci', 'roc', 'hma', 'williams_r', 'mom', 'stdev' -> params: { "length": 14 }
     - 'stoch_k', 'stoch_d' -> params: { "window": 14, "smooth": 3 }
-    - 'close', 'open', 'high', 'low', 'volume' -> params: {} (empty object)
+    - 'close', 'open', 'high', 'low', 'volume', 'obv', 'adl' -> params: {} (empty object)
     - 'number' -> params: { "value": number }
     
     JSON Structure Example:

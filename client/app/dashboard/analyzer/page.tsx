@@ -16,7 +16,7 @@ export default function Analyzer() {
 
   const fetchPortfolio = async () => {
     try {
-        const res = await fetch(`https://api.algoease.com/user/${session?.user?.email}/portfolio`);
+        const res = await fetch(`https://api-staging.algoease.com/user/${session?.user?.email}/portfolio`);
         if (res.ok) setData(await res.json());
     } catch(e) {}
     setLoading(false);
